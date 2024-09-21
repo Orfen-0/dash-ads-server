@@ -1,0 +1,82 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor folders
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Build output directory
+/build/
+/dist/
+
+# Temporary files
+/tmp/
+/temp/
+
+# MinIO data directory (if you're running MinIO locally)
+/minio-data/
+
+# MongoDB data directory (if you're running MongoDB locally)
+/mongodb-data/
+
+# Config files with sensitive information
+config.yaml
+config.json
+
+# Debug files
+debug
+
+# Project-specific ignores
+# Add any files or directories specific to your project here
+
+# Ignore all .flv files (assuming these are video files you don't want to track)
+*.flv
+
+# Ignore any generated documentation
+/docs/
+
+# Ignore any files in a 'secrets' directory
+/secrets/
+
+# Ignore binary file of your application
+dash-ads-server
