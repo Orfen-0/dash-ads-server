@@ -7,15 +7,15 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type RTMPConfig struct {
+	Port   string `json:"port"`
+	Domain string `json:"domain"` // For generating URLs
+}
 type Config struct {
 	RTMP    RTMPConfig
 	HTTP    HTTPConfig
 	Storage MinIOConfig
 	MongoDB MongoDBConfig
-}
-
-type RTMPConfig struct {
-	Port string
 }
 
 type HTTPConfig struct {
