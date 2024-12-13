@@ -50,19 +50,16 @@ type DeviceLocation struct {
 	Timestamp int64   `bson:"timestamp"`
 }
 
-// Add these methods to your MongoDB struct
 func (m *MongoDB) RegisterDevice(device *Device) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	collection := m.db.Collection("devices")
 
-	// Check if device already exists
 	var existingDevice Device
 	err := collection.FindOne(ctx, bson.M{"deviceId": device.DeviceID}).Decode(&existingDevice)
 
 	if err == nil {
-		// Update existing device
 		_, err = collection.UpdateOne(
 			ctx,
 			bson.M{"deviceId": device.DeviceID},
@@ -78,7 +75,6 @@ func (m *MongoDB) RegisterDevice(device *Device) error {
 		)
 		return err
 	} else if err == mongo.ErrNoDocuments {
-		// Insert new device
 		device.RegisteredAt = time.Now()
 		device.LastUpdatedAt = time.Now()
 		_, err = collection.InsertOne(ctx, device)
@@ -136,7 +132,6 @@ func NewMongoDB(cfg *config.MongoDBConfig) (*MongoDB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Add debug print
 	fmt.Printf("Connecting to MongoDB with URI: %s\n", cfg.URI)
 
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI))
@@ -144,14 +139,12 @@ func NewMongoDB(cfg *config.MongoDBConfig) (*MongoDB, error) {
 		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
 
-	// Add debug ping
 	err = client.Ping(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
 	fmt.Println("Successfully connected to MongoDB")
 
-	// Try to list collections as a test
 	db := client.Database(cfg.Database)
 	collections, err := db.ListCollectionNames(ctx, bson.M{})
 	if err != nil {

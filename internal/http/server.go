@@ -18,8 +18,7 @@ type Server struct {
 	config     *config.HTTPConfig
 	httpServer *http.Server
 	rtmpServer *rtmp.Server
-	db         *database.MongoDB // Add this line
-
+	db         *database.MongoDB
 }
 
 type Config struct {
@@ -72,7 +71,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/streams", s.streamsHandler)
 	mux.HandleFunc("/devices/register", s.registerDeviceHandler)
 	mux.HandleFunc("/devices/location", s.updateLocationHandler)
-	mux.HandleFunc("/devices/", s.deviceStatusHandler) // Note the trailing slash
+	mux.HandleFunc("/devices/", s.deviceStatusHandler)
 
 	s.httpServer = &http.Server{
 		Addr:    ":" + s.config.Port,
@@ -195,7 +194,6 @@ func (s *Server) deviceStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract deviceId from the URL path
 	deviceID := strings.TrimPrefix(r.URL.Path, "/devices/")
 	deviceID = strings.TrimSuffix(deviceID, "/status")
 
@@ -204,10 +202,8 @@ func (s *Server) deviceStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if device is registered in the database
 	_, err := s.db.GetDeviceByID(deviceID)
 	if err != nil {
-		// If no document found, it means device is not registered
 		if err == mongo.ErrNoDocuments {
 			sendJSONResponse(w, http.StatusOK, DeviceStatusResponse{
 				IsRegistered: false,
@@ -215,19 +211,16 @@ func (s *Server) deviceStatusHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Other database errors
 		log.Printf("Error checking device status: %v", err)
 		http.Error(w, "Failed to check device status", http.StatusInternalServerError)
 		return
 	}
 
-	// Device exists, so it's registered
 	sendJSONResponse(w, http.StatusOK, DeviceStatusResponse{
 		IsRegistered: true,
 	})
 }
 
-// Helper function to send JSON responses
 func sendJSONResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
