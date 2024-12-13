@@ -11,6 +11,7 @@ services:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - app_network
     healthcheck:
@@ -38,28 +39,6 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
-
-  goapp:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: goapp
-    environment:
-      MONGODB_URI: "mongodb://root:example@mongodb:27017/"
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_USE_SSL: "false"
-    ports:
-      - "8080:8080"
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    networks:
-      - app_network
-
 networks:
   app_network:
     driver: bridge

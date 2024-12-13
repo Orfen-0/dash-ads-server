@@ -36,7 +36,7 @@ type MongoDBConfig struct {
 }
 
 func Load() (*Config, error) {
-	err := godotenv.Load()
+	err := godotenv.Load("env.local")
 	if err != nil {
 		fmt.Println("Warning: Error loading .env file")
 	}
@@ -56,7 +56,7 @@ func Load() (*Config, error) {
 			Bucket:    getEnv("MINIO_BUCKET", "videos"),
 		},
 		MongoDB: MongoDBConfig{
-			URI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
+			URI:      getEnv("MONGODB_URI", "mongodb://root:example@localhost:27017"),
 			Database: getEnv("MONGODB_DATABASE", "dash_ads_server"),
 		},
 	}
