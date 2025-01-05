@@ -12,7 +12,7 @@ import (
 
 type MinIOStorage struct {
 	client *minio.Client
-	bucket string
+	Bucket string
 }
 
 func NewMinIOStorage(cfg *config.MinIOConfig) (*MinIOStorage, error) {
@@ -26,12 +26,12 @@ func NewMinIOStorage(cfg *config.MinIOConfig) (*MinIOStorage, error) {
 
 	return &MinIOStorage{
 		client: client,
-		bucket: cfg.Bucket,
+		Bucket: cfg.Bucket,
 	}, nil
 }
 
 func (s *MinIOStorage) UploadStream(ctx context.Context, objectName string, reader io.Reader) error {
-	_, err := s.client.PutObject(ctx, s.bucket, objectName, reader, -1, minio.PutObjectOptions{})
+	_, err := s.client.PutObject(ctx, s.Bucket, objectName, reader, -1, minio.PutObjectOptions{})
 	if err != nil {
 		log.Printf("Failed to upload object %s: %v", objectName, err)
 		return err

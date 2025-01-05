@@ -51,11 +51,12 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) handlePublish(conn *rtmp.Conn) error {
+	log.Printf("New publish request from %s", conn.URL)
 	streams, err := conn.Streams()
 	if err != nil {
 		return fmt.Errorf("error getting streams: %w", err)
 	}
-
+	log.Printf("incoming stream")
 	// Extract user ID from URL parameters
 	latStr := conn.URL.Query().Get("lat")
 	lngStr := conn.URL.Query().Get("lng")
@@ -73,31 +74,28 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	if err != nil {
 		return fmt.Errorf("invalid timestamp")
 	}
-	parsedTime, err := time.Unix(sec, 0), nil
+	parsedTime := time.Unix(sec/1000, (sec%1000)*int64(time.Millisecond))
 	if err != nil {
 		return fmt.Errorf("invalid timestamp parsing")
 	}
 	// Create stream record
 	streamID := primitive.NewObjectID()
-	deviceIDObjId, err := primitive.ObjectIDFromHex(deviceID)
-
 	fileName := fmt.Sprintf("%s.flv", streamID.Hex())
-	rtmpURL := fmt.Sprintf("rtmp://%s/%s", s.rtmpConfig.Domain, streamID.Hex())
-	playbackURL := fmt.Sprintf("http://%s/play/%s", s.rtmpConfig.Domain, streamID.Hex())
+	rtmpURL := fmt.Sprintf("rtmp://%s:%s/live/%s", s.rtmpConfig.Domain, s.rtmpConfig.Port, streamID.Hex())
+	playbackURL := fmt.Sprintf("http://%s:%s/playback/%s.flv", s.rtmpConfig.Domain, s.rtmpConfig.HTTPPort, streamID.Hex())
 
 	stream := &database.Stream{
-		ID:               streamID,
-		DeviceIdObjectId: deviceIDObjId,
-		DeviceId:         deviceID,
-		Title:            deviceID,
-		Description:      latStr + "_" + lngStr,
-		StartTime:        parsedTime,
-		Status:           "live",
-		RTMPURL:          rtmpURL,
-		PlaybackURL:      playbackURL,
-		Latitude:         latStr,
-		Longitude:        lngStr,
-		LocAccuracy:      acc,
+		ID:          streamID,
+		DeviceId:    deviceID,
+		Title:       deviceID,
+		Description: latStr + "_" + lngStr,
+		StartTime:   parsedTime,
+		Status:      "live",
+		RTMPURL:     rtmpURL,
+		PlaybackURL: playbackURL,
+		Latitude:    latStr,
+		Longitude:   lngStr,
+		LocAccuracy: acc,
 	}
 
 	// Save stream to MongoDB
@@ -112,7 +110,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	// Start MinIO upload
 	go func() {
 		defer pipeReader.Close()
-		objectPath := fmt.Sprintf("streams/%s/%s", stream.DeviceIdObjectId.Hex(), fileName)
+		objectPath := fmt.Sprintf("%s/%s/%s", s.storage.Bucket, stream.DeviceId, fileName)
 		if err := s.storage.UploadStream(context.Background(), objectPath, pipeReader); err != nil {
 			log.Printf("Failed to upload stream to MinIO: %v", err)
 		}

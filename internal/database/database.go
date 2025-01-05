@@ -21,19 +21,18 @@ type MongoDB struct {
 }
 
 type Stream struct {
-	ID               primitive.ObjectID `bson:"_id,omitempty"`
-	DeviceIdObjectId primitive.ObjectID `bson:"DeviceIdObjectId"`
-	DeviceId         string             `bson:"deviceId"`
-	Title            string             `bson:"title"`
-	Description      string             `bson:"description"`
-	StartTime        time.Time          `bson:"startTime"`
-	EndTime          *time.Time         `bson:"endTime,omitempty"`
-	Status           string             `bson:"status"`
-	RTMPURL          string             `bson:"rtmpUrl"`
-	PlaybackURL      string             `bson:"playbackUrl"`
-	Latitude         string             `bson:"latitude"`
-	Longitude        string             `bson:"longitude"`
-	LocAccuracy      string             `bson:"locAccuracy"`
+	ID          primitive.ObjectID `bson:"_id,omitempty"`
+	DeviceId    string             `bson:"deviceId"`
+	Title       string             `bson:"title"`
+	Description string             `bson:"description"`
+	StartTime   time.Time          `bson:"startTime"`
+	EndTime     *time.Time         `bson:"endTime,omitempty"`
+	Status      string             `bson:"status"`
+	RTMPURL     string             `bson:"rtmpUrl"`
+	PlaybackURL string             `bson:"playbackUrl"`
+	Latitude    string             `bson:"latitude"`
+	Longitude   string             `bson:"longitude"`
+	LocAccuracy string             `bson:"locAccuracy"`
 }
 
 type Device struct {
