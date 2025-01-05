@@ -12,20 +12,23 @@ import (
 	"io"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Server struct {
-	rtmpConfig *config.RTMPConfig
-	storage    *storage.MinIOStorage
-	db         *database.MongoDB
+	rtmpConfig        *config.RTMPConfig
+	storage           *storage.MinIOStorage
+	db                *database.MongoDB
+	liveStreamManager *LiveStreamManager
 }
 
 func NewServer(cfg *config.RTMPConfig, storage *storage.MinIOStorage, db *database.MongoDB) (*Server, error) {
 	return &Server{
-		rtmpConfig: cfg,
-		storage:    storage,
-		db:         db,
+		rtmpConfig:        cfg,
+		storage:           storage,
+		db:                db,
+		liveStreamManager: NewLiveStreamManager(),
 	}, nil
 }
 
@@ -83,7 +86,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	fileName := fmt.Sprintf("%s.flv", streamID.Hex())
 	rtmpURL := fmt.Sprintf("rtmp://%s:%s/live/%s", s.rtmpConfig.Domain, s.rtmpConfig.Port, streamID.Hex())
 	playbackURL := fmt.Sprintf("http://%s:%s/playback/%s.flv", s.rtmpConfig.Domain, s.rtmpConfig.HTTPPort, streamID.Hex())
-
+	log.Printf(rtmpURL)
 	stream := &database.Stream{
 		ID:          streamID,
 		DeviceId:    deviceID,
@@ -103,10 +106,16 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		return fmt.Errorf("failed to create stream record: %w", err)
 	}
 
+	streamIDStr := streamID.String()
+	s.liveStreamManager.AddPublisher(streamIDStr, conn)
+	defer s.liveStreamManager.RemovePublisher(streamIDStr)
+
 	// Create pipe for streaming to MinIO
 	pipeReader, pipeWriter := io.Pipe()
 	flvMuxer := flv.NewMuxer(pipeWriter)
-
+	if err := flvMuxer.WriteHeader(streams); err != nil {
+		return fmt.Errorf("error writing FLV header: %w", err)
+	}
 	// Start MinIO upload
 	go func() {
 		defer pipeReader.Close()
@@ -146,31 +155,92 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 }
 
 func (s *Server) handlePlay(conn *rtmp.Conn) error {
-	// Extract stream ID from path
-	streamIDStr := conn.URL.Path
+
+	streamIDStr := strings.TrimPrefix(conn.URL.Path, "/live/")
+	if streamIDStr == "" || streamIDStr == conn.URL.Path {
+		return fmt.Errorf("invalid stream path or missing stream ID")
+	}
 	if streamIDStr == "" {
 		return fmt.Errorf("stream ID not provided")
 	}
-
-	streamID, err := primitive.ObjectIDFromHex(streamIDStr)
-	if err != nil {
-		return fmt.Errorf("invalid stream ID format: %w", err)
-	}
-
-	// Get stream info
-	stream, err := s.db.GetStream(streamID)
+	log.Printf("incoming request for %s stream", streamIDStr)
+	// Fetch stream metadata from DB
+	streamId, _ := primitive.ObjectIDFromHex(streamIDStr)
+	stream, err := s.db.GetStream(streamId)
 	if err != nil {
 		return fmt.Errorf("failed to get stream: %w", err)
 	}
 
-	if stream.Status != "live" {
-		return fmt.Errorf("stream is not live")
-	}
+	if stream.Status == "live" {
+		// For live streams, forward packets from the publishing connection
+		// Check if the stream is live
+		publisher := s.liveStreamManager.GetPublisher(streamIDStr)
+		if publisher != nil {
+			log.Printf("Client connected to live stream: %s", streamIDStr)
 
-	// Here you would implement the playback logic
-	// This might involve reading from MinIO and sending to the RTMP client
-	// For now, we'll just log the attempt
-	log.Printf("Play request for stream: %s", stream.ID.Hex())
+			// Add the client to the LiveStreamManager
+			s.liveStreamManager.AddClient(streamIDStr, conn)
+			defer s.liveStreamManager.RemoveClient(streamIDStr, conn)
+
+			// Forward packets from the publisher
+			for {
+				packet, err := publisher.ReadPacket()
+				if err != nil {
+					if err == io.EOF {
+						log.Printf("Live stream %s ended", streamIDStr)
+						break
+					}
+					log.Printf("Error reading live packet for stream %s: %v", streamIDStr, err)
+					return err
+				}
+
+				if err := conn.WritePacket(packet); err != nil {
+					log.Printf("Error forwarding packet to client for stream %s: %v", streamIDStr, err)
+					return err
+				}
+			}
+
+			return nil
+		}
+	} else if stream.Status == "ended" {
+		// For recorded streams, retrieve the .flv file from MinIO
+		log.Printf("Playing recorded stream: %s", streamIDStr)
+		objectPath := fmt.Sprintf("streams/%s/%s", stream.DeviceId, stream.ID.Hex()+".flv")
+		flvFileReader, err := s.storage.DownloadStream(context.Background(), objectPath)
+		if err != nil {
+			return fmt.Errorf("failed to retrieve stream file: %w", err)
+		}
+		defer flvFileReader.Close()
+
+		// Parse the FLV file
+		demuxer := flv.NewDemuxer(flvFileReader)
+		streams, err := demuxer.Streams()
+		if err != nil {
+			return fmt.Errorf("failed to parse FLV streams: %w", err)
+		}
+
+		// Write FLV header to the RTMP connection
+		if err := conn.WriteHeader(streams); err != nil {
+			return fmt.Errorf("failed to write RTMP header: %w", err)
+		}
+
+		// Write packets to the RTMP connection
+		for {
+			packet, err := demuxer.ReadPacket()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("failed to read FLV packet: %w", err)
+			}
+
+			if err := conn.WritePacket(packet); err != nil {
+				return fmt.Errorf("failed to write packet to RTMP client: %w", err)
+			}
+		}
+	} else {
+		return fmt.Errorf("invalid stream status: %s", stream.Status)
+	}
 
 	return nil
 }

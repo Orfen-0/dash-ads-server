@@ -40,4 +40,23 @@ func (s *MinIOStorage) UploadStream(ctx context.Context, objectName string, read
 	return nil
 }
 
+func (s *MinIOStorage) DownloadStream(ctx context.Context, objectName string) (io.ReadCloser, error) {
+	// Get the object from the bucket
+	obj, err := s.client.GetObject(ctx, s.Bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		log.Printf("Failed to download object %s: %v", objectName, err)
+		return nil, err
+	}
+
+	// Check if the object exists by reading its properties
+	_, err = obj.Stat()
+	if err != nil {
+		log.Printf("Object %s does not exist or cannot be accessed: %v", objectName, err)
+		return nil, err
+	}
+
+	log.Printf("Successfully opened object %s for streaming", objectName)
+	return obj, nil
+}
+
 // Add more methods as needed, e.g., DownloadStream, DeleteObject, etc.
