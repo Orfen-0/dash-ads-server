@@ -2,20 +2,22 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/joho/godotenv"
 )
 
+type RTMPConfig struct {
+	Port     string `json:"port"`
+	Domain   string `json:"domain"` // For generating URLs
+	HTTPPort string `json:"http-port"`
+}
 type Config struct {
 	RTMP    RTMPConfig
 	HTTP    HTTPConfig
 	Storage MinIOConfig
 	MongoDB MongoDBConfig
-}
-
-type RTMPConfig struct {
-	Port string
 }
 
 type HTTPConfig struct {
@@ -36,27 +38,30 @@ type MongoDBConfig struct {
 }
 
 func Load() (*Config, error) {
-	err := godotenv.Load()
+	// Load .env file
+	err := godotenv.Load(".env.local")
 	if err != nil {
 		fmt.Println("Warning: Error loading .env file")
 	}
 
 	config := &Config{
 		RTMP: RTMPConfig{
-			Port: getEnv("RTMP_PORT", "1935"),
+			Port:     getEnv("RTMP_PORT", "1935"),
+			Domain:   getEnv("RTMP_DOMAIN", getFallbackDomain()),
+			HTTPPort: getEnv("HTTP_PORT", "8080"),
 		},
 		HTTP: HTTPConfig{
 			Port: getEnv("HTTP_PORT", "8080"),
 		},
 		Storage: MinIOConfig{
 			Endpoint:  getEnv("MINIO_ENDPOINT", "localhost:9000"),
-			AccessKey: getEnv("MINIO_ACCESS_KEY", ""),
-			SecretKey: getEnv("MINIO_SECRET_KEY", ""),
+			AccessKey: getEnv("MINIO_ACCESS_KEY", "minioadmin"),
+			SecretKey: getEnv("MINIO_SECRET_KEY", "minioadmin"),
 			UseSSL:    getEnvAsBool("MINIO_USE_SSL", false),
-			Bucket:    getEnv("MINIO_BUCKET", "videos"),
+			Bucket:    getEnv("MINIO_BUCKET", "streams"),
 		},
 		MongoDB: MongoDBConfig{
-			URI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
+			URI:      getEnv("MONGODB_URI", "mongodb://root:example@localhost:27017"),
 			Database: getEnv("MONGODB_DATABASE", "dash_ads_server"),
 		},
 	}
@@ -76,4 +81,23 @@ func getEnvAsBool(key string, fallback bool) bool {
 		return value == "true" || value == "1"
 	}
 	return fallback
+}
+
+func getFallbackDomain() string {
+	// Try to determine the local IP address
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		fmt.Println("Error getting local IP:", err)
+		return "localhost" // Fallback to localhost
+	}
+
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ipNet.IP.To4() != nil {
+				return ipNet.IP.String()
+			}
+		}
+	}
+
+	return "localhost" // Final fallback if no suitable IP is found
 }

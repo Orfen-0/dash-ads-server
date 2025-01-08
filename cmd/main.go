@@ -35,7 +35,7 @@ func main() {
 	}
 
 	// Create HTTP server
-	httpServer := http.NewServer(&cfg.HTTP, rtmpServer)
+	httpServer := http.NewServer(&cfg.HTTP, rtmpServer, mongoDB)
 
 	// Start servers
 	go func() {
