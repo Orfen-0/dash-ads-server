@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/Orfen-0/dash-ads-server/internal/mqttclient"
 	"log"
 
 	"github.com/Orfen-0/dash-ads-server/internal/config"
@@ -28,6 +29,11 @@ func main() {
 		log.Fatalf("Failed to initialize MongoDB: %v", err)
 	}
 
+	mq, err := mqttclient.NewMQTTClient(&cfg.MQTT, mongoDB)
+	if err != nil {
+		log.Fatalf("Failed to init MQTT: %v", err)
+	}
+
 	// Create RTMP server
 	rtmpServer, err := rtmp.NewServer(&cfg.RTMP, minioStorage, mongoDB)
 	if err != nil {
@@ -35,7 +41,7 @@ func main() {
 	}
 
 	// Create HTTP server
-	httpServer := http.NewServer(&cfg.HTTP, rtmpServer, mongoDB)
+	httpServer := http.NewServer(&cfg.HTTP, rtmpServer, mq, mongoDB)
 
 	// Start servers
 	go func() {

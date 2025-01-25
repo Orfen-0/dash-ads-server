@@ -1,21 +1,22 @@
 package rtmp
 
 import (
+	"log"
 	"sync"
 
 	"github.com/nareix/joy4/av"
 	"github.com/nareix/joy4/format/rtmp"
 )
 
-// LiveStream represents a publisher plus multiple clients.
 type LiveStream struct {
-	Publisher *rtmp.Conn
-	Streams   []av.CodecData // Store the publisher's codec data
-	Clients   map[*ClientConn]bool
+	Publisher   *rtmp.Conn
+	Streams     []av.CodecData
+	RTMPClients map[*rtmp.Conn]bool
+	HTTPClients map[chan av.Packet]bool
+	mu          sync.RWMutex
 }
-
 type LiveStreamManager struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	streams map[string]*LiveStream
 }
 
@@ -25,19 +26,14 @@ func NewLiveStreamManager() *LiveStreamManager {
 	}
 }
 
-// ClientConn holds a channel for packets and a pointer to the RTMP connection.
-type ClientConn struct {
-	Conn       *rtmp.Conn
-	PacketChan chan av.Packet
-}
-
-func (m *LiveStreamManager) AddPublisher(streamID string, publisher *rtmp.Conn, codecData []av.CodecData) {
+func (m *LiveStreamManager) AddPublisher(streamID string, conn *rtmp.Conn, streams []av.CodecData) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.streams[streamID] = &LiveStream{
-		Publisher: publisher,
-		Streams:   codecData,
-		Clients:   make(map[*ClientConn]bool),
+		Publisher:   conn,
+		Streams:     streams,
+		RTMPClients: make(map[*rtmp.Conn]bool),
+		HTTPClients: make(map[chan av.Packet]bool),
 	}
 }
 
@@ -47,58 +43,90 @@ func (m *LiveStreamManager) RemovePublisher(streamID string) {
 	delete(m.streams, streamID)
 }
 
-func (m *LiveStreamManager) GetPublisher(streamID string) *LiveStream {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.streams[streamID]
-}
-
-func (m *LiveStreamManager) AddClient(streamID string, c *ClientConn) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if ls, ok := m.streams[streamID]; ok {
-		ls.Clients[c] = true
+func (m *LiveStreamManager) AddRTMPClient(streamID string, client *rtmp.Conn) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if stream, ok := m.streams[streamID]; ok {
+		stream.mu.Lock()
+		stream.RTMPClients[client] = true
+		stream.mu.Unlock()
 	}
 }
 
-func (m *LiveStreamManager) RemoveClient(streamID string, c *ClientConn) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if ls, ok := m.streams[streamID]; ok {
-		delete(ls.Clients, c)
+func (m *LiveStreamManager) RemoveRTMPClient(streamID string, client *rtmp.Conn) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if stream, ok := m.streams[streamID]; ok {
+		stream.mu.Lock()
+		delete(stream.RTMPClients, client)
+		stream.mu.Unlock()
+	}
+}
+
+func (m *LiveStreamManager) AddHTTPClient(streamID string, clientChan chan av.Packet) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if stream, ok := m.streams[streamID]; ok {
+		stream.mu.Lock()
+		stream.HTTPClients[clientChan] = true
+		stream.mu.Unlock()
+	}
+}
+
+func (m *LiveStreamManager) RemoveHTTPClient(streamID string, clientChan chan av.Packet) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if stream, ok := m.streams[streamID]; ok {
+		stream.mu.Lock()
+		delete(stream.HTTPClients, clientChan)
+		close(clientChan)
+		stream.mu.Unlock()
 	}
 }
 
 func (m *LiveStreamManager) ForwardPacket(streamID string, packet av.Packet) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	ls, ok := m.streams[streamID]
-	if !ok {
-		return
-	}
-	for client := range ls.Clients {
-		select {
-		case client.PacketChan <- packet:
-			// Sent successfully
-		default:
-			// Client channel is full or slow; decide how to handle
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if stream, ok := m.streams[streamID]; ok {
+		stream.mu.RLock()
+		// Forward to RTMP clients
+		for client := range stream.RTMPClients {
+			if err := client.WritePacket(packet); err != nil {
+				log.Printf("Failed to write packet to RTMP client: %v", err)
+			}
 		}
+		// Forward to HTTP-FLV clients
+		for clientChan := range stream.HTTPClients {
+			select {
+			case clientChan <- packet:
+			default:
+				log.Printf("HTTP-FLV client channel full, dropping packet")
+			}
+		}
+		stream.mu.RUnlock()
 	}
+}
+func (m *LiveStreamManager) GetPublisher(streamID string) *LiveStream {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.streams[streamID]
 }
 
 func (m *LiveStreamManager) CloseAllClients(streamID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	ls, ok := m.streams[streamID]
-	if !ok {
-		return
-	}
-
-	// Close each client's channel or RTMP connection
-	for client := range ls.Clients {
-		close(client.PacketChan)
-		// Optionally client.Conn.Close() if we want to forcefully close the RTMP connection
-		delete(ls.Clients, client)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if stream, ok := m.streams[streamID]; ok {
+		stream.mu.Lock()
+		// Close HTTP-FLV client channels
+		for clientChan := range stream.HTTPClients {
+			close(clientChan)
+			delete(stream.HTTPClients, clientChan)
+		}
+		// Close RTMP clients
+		for client := range stream.RTMPClients {
+			client.Close()
+			delete(stream.RTMPClients, client)
+		}
+		stream.mu.Unlock()
 	}
 }

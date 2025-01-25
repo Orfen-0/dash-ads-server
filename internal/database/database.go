@@ -18,21 +18,24 @@ type MongoDB struct {
 	client  *mongo.Client
 	db      *mongo.Database
 	devices *mongo.Collection
+	events  *mongo.Collection
+	streams *mongo.Collection
 }
 
 type Stream struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty"`
-	DeviceId    string             `bson:"deviceId"`
-	Title       string             `bson:"title"`
-	Description string             `bson:"description"`
-	StartTime   time.Time          `bson:"startTime"`
-	EndTime     *time.Time         `bson:"endTime,omitempty"`
-	Status      string             `bson:"status"`
-	RTMPURL     string             `bson:"rtmpUrl"`
-	PlaybackURL string             `bson:"playbackUrl"`
-	Latitude    string             `bson:"latitude"`
-	Longitude   string             `bson:"longitude"`
-	LocAccuracy string             `bson:"locAccuracy"`
+	ID          primitive.ObjectID  `bson:"_id,omitempty"`
+	EventID     *primitive.ObjectID `bson:"eventId,omitempty"`
+	DeviceId    string              `bson:"deviceId"`
+	Title       string              `bson:"title"`
+	Description string              `bson:"description"`
+	StartTime   time.Time           `bson:"startTime"`
+	EndTime     *time.Time          `bson:"endTime,omitempty"`
+	Status      string              `bson:"status"`
+	RTMPURL     string              `bson:"rtmpUrl"`
+	PlaybackURL string              `bson:"playbackUrl"`
+	Latitude    string              `bson:"latitude"`
+	Longitude   string              `bson:"longitude"`
+	LocAccuracy string              `bson:"locAccuracy"`
 }
 
 type Device struct {
@@ -51,6 +54,21 @@ type DeviceLocation struct {
 	Longitude float64 `bson:"longitude"`
 	Accuracy  float32 `bson:"accuracy"`
 	Timestamp int64   `bson:"timestamp"`
+}
+
+type Event struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty"`
+	TriggeredBy string             `bson:"triggeredBy"` // e.g. which user/device triggered it
+	StartTime   time.Time          `bson:"startTime"`
+	EndTime     *time.Time         `bson:"endTime,omitempty"`
+	Location    EventLocation      `bson:"location"`
+	Radius      float64            `bson:"radius"`
+	Status      string             `bson:"status"` // e.g. "active", "ended"
+}
+
+type EventLocation struct {
+	Latitude  float64 `bson:"latitude"`
+	Longitude float64 `bson:"longitude"`
 }
 
 func (m *MongoDB) RegisterDevice(device *Device) error {
@@ -85,6 +103,87 @@ func (m *MongoDB) RegisterDevice(device *Device) error {
 	}
 
 	return err
+}
+
+func (m *MongoDB) CreateEvent(event *Event) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := m.events.InsertOne(ctx, event)
+	if err != nil {
+		return fmt.Errorf("failed to insert event: %w", err)
+	}
+	return nil
+}
+
+func (m *MongoDB) GetEvent(id primitive.ObjectID) (*Event, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var evt Event
+	err := m.events.FindOne(ctx, bson.M{"_id": id}).Decode(&evt)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("event not found")
+		}
+		return nil, fmt.Errorf("failed to get event: %w", err)
+	}
+	return &evt, nil
+}
+
+func (m *MongoDB) UpdateEventStatus(id primitive.ObjectID, status string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := m.events.UpdateOne(
+		ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"status": status}},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update event status: %w", err)
+	}
+	return nil
+}
+
+func (m *MongoDB) ListEventsByDateRange(from, to time.Time) ([]*Event, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Build a filter
+	filter := bson.M{}
+	// If 'from' is non-zero, { "startTime": { $gte: from } }
+	if !from.IsZero() {
+		filter["startTime"] = bson.M{"$gte": from}
+	}
+	// If 'to' is non-zero, add $lte to the same field
+	if !to.IsZero() {
+		// If filter["startTime"] doesn't exist yet, define it
+		if _, ok := filter["startTime"]; !ok {
+			filter["startTime"] = bson.M{}
+		}
+		filter["startTime"].(bson.M)["$lte"] = to
+	}
+
+	cursor, err := m.events.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []*Event
+	for cursor.Next(ctx) {
+		var e Event
+		if err := cursor.Decode(&e); err != nil {
+			log.Printf("Error decoding event doc: %v", err)
+			continue
+		}
+		results = append(results, &e)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("cursor error: %w", err)
+	}
+	return results, nil
 }
 
 func (m *MongoDB) UpdateDeviceLocation(deviceID string, location DeviceLocation) error {
@@ -159,6 +258,8 @@ func NewMongoDB(cfg *config.MongoDBConfig) (*MongoDB, error) {
 		client:  client,
 		db:      db,
 		devices: db.Collection("devices"),
+		events:  db.Collection("events"),
+		streams: db.Collection("streams"),
 	}, nil
 }
 
@@ -172,8 +273,7 @@ func (m *MongoDB) CreateStream(stream *Stream) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collection := m.db.Collection("streams")
-	_, err := collection.InsertOne(ctx, stream)
+	_, err := m.streams.InsertOne(ctx, stream)
 	if err != nil {
 		return fmt.Errorf("failed to insert stream: %w", err)
 	}
@@ -185,9 +285,8 @@ func (m *MongoDB) GetStream(id primitive.ObjectID) (*Stream, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collection := m.db.Collection("streams")
 	var stream Stream
-	err := collection.FindOne(ctx, bson.M{"_id": id}).Decode(&stream)
+	err := m.streams.FindOne(ctx, bson.M{"_id": id}).Decode(&stream)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, fmt.Errorf("stream not found")
@@ -202,8 +301,7 @@ func (m *MongoDB) UpdateStreamStatus(id primitive.ObjectID, status string) error
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collection := m.db.Collection("streams")
-	_, err := collection.UpdateOne(
+	_, err := m.streams.UpdateOne(
 		ctx,
 		bson.M{"_id": id},
 		bson.M{"$set": bson.M{"status": status}},
@@ -219,8 +317,7 @@ func (m *MongoDB) EndStream(id primitive.ObjectID) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collection := m.db.Collection("streams")
-	_, err := collection.UpdateOne(
+	_, err := m.streams.UpdateOne(
 		ctx,
 		bson.M{"_id": id},
 		bson.M{
@@ -250,8 +347,7 @@ func (m *MongoDB) ListActiveStreams() ([]*Stream, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	collection := m.db.Collection("streams")
-	cursor, err := collection.Find(ctx, bson.M{"status": "live"})
+	cursor, err := m.streams.Find(ctx, bson.M{"status": "live"})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list active streams: %w", err)
 	}
