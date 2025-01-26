@@ -7,18 +7,19 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: example
+      MONGOSH_DISABLE_HISTORY: "true"  # Prevent mongosh from creating /data/db/.mongodb
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ./docker_conf/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
     networks:
       - app_network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+        test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
 
   minio:
     image: minio/minio:latest
@@ -28,8 +29,8 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_BUCKETS: streams
     ports:
-      - "9000:9000"  # API
-      - "9001:9001"  # Console
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
     networks:
@@ -40,26 +41,22 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+
   mosquitto:
     image: eclipse-mosquitto:latest
     container_name: mosquitto
-    # Expose the standard MQTT port (1883) and an optional WebSocket port (9001).
+    volumes:
+      - ./docker_conf/mosquitto.conf:/mosquitto/config/mosquitto.conf
     ports:
       - "1883:1883"
-      # Uncomment if you want a websocket listener for MQTT:
-      # - "9001:9001"
     networks:
       - app_network
-    # You can mount a custom configuration or persist data if needed:
-    # volumes:
-    #   - mosquitto_conf:/mosquitto/config
-    #   - mosquitto_data:/mosquitto/data
-
     healthcheck:
       test: [ "CMD-SHELL", "mosquitto_sub -h localhost -t healthcheck -C 1 -W 2 || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 3
+
 networks:
   app_network:
     driver: bridge
