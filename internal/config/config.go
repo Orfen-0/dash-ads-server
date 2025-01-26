@@ -18,6 +18,7 @@ type Config struct {
 	HTTP    HTTPConfig
 	Storage MinIOConfig
 	MongoDB MongoDBConfig
+	MQTT    MQTTConfig
 }
 
 type HTTPConfig struct {
@@ -35,6 +36,12 @@ type MinIOConfig struct {
 type MongoDBConfig struct {
 	URI      string
 	Database string
+}
+
+type MQTTConfig struct {
+	URI      string
+	Username string
+	Password string
 }
 
 func Load() (*Config, error) {
@@ -63,6 +70,11 @@ func Load() (*Config, error) {
 		MongoDB: MongoDBConfig{
 			URI:      getEnv("MONGODB_URI", "mongodb://root:example@localhost:27017"),
 			Database: getEnv("MONGODB_DATABASE", "dash_ads_server"),
+		},
+		MQTT: MQTTConfig{
+			URI:      getEnv("MQTT_URI", "mqtt://localhost:1883"),
+			Username: getEnv("MQTT_USERNAME", ""),
+			Password: getEnv("MQTT_PASSWORD", ""),
 		},
 	}
 
