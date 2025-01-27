@@ -22,20 +22,24 @@ type MongoDB struct {
 	streams *mongo.Collection
 }
 
+type GeoJSONPoint struct {
+	Type        string     `bson:"type"`        // "Point"
+	Coordinates [2]float64 `bson:"coordinates"` // [lng, lat]
+}
+
 type Stream struct {
-	ID          primitive.ObjectID  `bson:"_id,omitempty"`
-	EventID     *primitive.ObjectID `bson:"eventId,omitempty"`
-	DeviceId    string              `bson:"deviceId"`
-	Title       string              `bson:"title"`
-	Description string              `bson:"description"`
-	StartTime   time.Time           `bson:"startTime"`
-	EndTime     *time.Time          `bson:"endTime,omitempty"`
-	Status      string              `bson:"status"`
-	RTMPURL     string              `bson:"rtmpUrl"`
-	PlaybackURL string              `bson:"playbackUrl"`
-	Latitude    string              `bson:"latitude"`
-	Longitude   string              `bson:"longitude"`
-	LocAccuracy string              `bson:"locAccuracy"`
+	ID            primitive.ObjectID  `bson:"_id,omitempty"`
+	EventID       *primitive.ObjectID `bson:"eventId,omitempty"`
+	DeviceId      string              `bson:"deviceId"`
+	Title         string              `bson:"title"`
+	Description   string              `bson:"description"`
+	StartTime     time.Time           `bson:"startTime"`
+	EndTime       *time.Time          `bson:"endTime,omitempty"`
+	Status        string              `bson:"status"`
+	RTMPURL       string              `bson:"rtmpUrl"`
+	PlaybackURL   string              `bson:"playbackUrl"`
+	StartLocation GeoJSONPoint        `bson:"startLocation"`
+	LocAccuracy   float32             `bson:"locAccuracy"`
 }
 
 type Device struct {
@@ -44,7 +48,9 @@ type Device struct {
 	Model         string             `bson:"model"`
 	Manufacturer  string             `bson:"manufacturer"`
 	OsVersion     string             `bson:"osVersion"`
-	LastLocation  DeviceLocation     `bson:"lastLocation"`
+	LastLocation  GeoJSONPoint       `bson:"lastLocation"`
+	LocAccuracy   float32            `bson:"locAccuracy"`
+	LocUpdate     time.Time          `bson:"locUpdate"`
 	RegisteredAt  time.Time          `bson:"registeredAt"`
 	LastUpdatedAt time.Time          `bson:"lastUpdatedAt"`
 }
@@ -186,9 +192,21 @@ func (m *MongoDB) ListEventsByDateRange(from, to time.Time) ([]*Event, error) {
 	return results, nil
 }
 
-func (m *MongoDB) UpdateDeviceLocation(deviceID string, location DeviceLocation) error {
+func (m *MongoDB) UpdateDeviceLocation(deviceID string, loc DeviceLocation) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Convert timestamp (milliseconds) to time.Time
+	updateTime := time.Unix(
+		loc.Timestamp/1000,
+		(loc.Timestamp%1000)*int64(time.Millisecond),
+	)
+
+	// Construct GeoJSON point
+	geoPoint := GeoJSONPoint{
+		Type:        "Point",
+		Coordinates: [2]float64{loc.Longitude, loc.Latitude}, // [lng, lat]
+	}
 
 	collection := m.db.Collection("devices")
 	result, err := collection.UpdateOne(
@@ -196,12 +214,13 @@ func (m *MongoDB) UpdateDeviceLocation(deviceID string, location DeviceLocation)
 		bson.M{"deviceId": deviceID},
 		bson.M{
 			"$set": bson.M{
-				"lastLocation":  location,
+				"lastLocation":  geoPoint,
+				"locAccuracy":   loc.Accuracy,
+				"locUpdate":     updateTime,
 				"lastUpdatedAt": time.Now(),
 			},
 		},
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to update device location: %w", err)
 	}

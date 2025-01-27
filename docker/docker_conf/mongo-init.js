@@ -7,4 +7,14 @@ db.createCollection('events')
 
 // Create indexes if needed
 db.devices.createIndex({ "deviceId": 1 }, { unique: true });
-db.devices.createIndex({ "position": "2dsphere" })
+db.streams.createIndex({ "status": 1 });
+
+db.devices.createIndex(
+    { "lastLocation": "2dsphere" }
+);
+db.events.createIndex(
+    { "location": "2dsphere" }
+);
+db.streams.createIndex(
+    { "startLocation": "2dsphere" }
+);

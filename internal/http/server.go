@@ -82,7 +82,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/health", s.healthCheckHandler)
 	mux.HandleFunc("/streams", s.streamsHandler)
 	mux.HandleFunc("/devices/register", s.registerDeviceHandler)
-	mux.HandleFunc("/devices/location", s.updateLocationHandler)
 	mux.HandleFunc("/devices/", s.deviceStatusHandler)
 	mux.HandleFunc("/playback/", s.handleHTTPPlayFLV)
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
@@ -161,12 +160,12 @@ func (s *Server) registerDeviceHandler(w http.ResponseWriter, r *http.Request) {
 		Model:        req.Model,
 		Manufacturer: req.Manufacturer,
 		OsVersion:    req.OsVersion,
-		LastLocation: database.DeviceLocation{
-			Latitude:  req.Location.Latitude,
-			Longitude: req.Location.Longitude,
-			Accuracy:  req.Location.Accuracy,
-			Timestamp: req.Location.Timestamp,
+		LastLocation: database.GeoJSONPoint{
+			Type:        "Point",
+			Coordinates: [2]float64{req.Location.Longitude, req.Location.Latitude},
 		},
+		LastUpdatedAt: time.Unix(req.Location.Timestamp, 0),
+		LocAccuracy:   req.Location.Accuracy,
 	}
 
 	if err := s.db.RegisterDevice(device); err != nil {
@@ -181,34 +180,6 @@ func (s *Server) registerDeviceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSONResponse(w, http.StatusOK, response)
-}
-
-func (s *Server) updateLocationHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req LocationUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	location := database.DeviceLocation{
-		Latitude:  req.Latitude,
-		Longitude: req.Longitude,
-		Accuracy:  req.Accuracy,
-		Timestamp: req.Timestamp,
-	}
-
-	if err := s.db.UpdateDeviceLocation(req.DeviceID, location); err != nil {
-		log.Printf("Error updating location: %v", err)
-		http.Error(w, "Failed to update location", http.StatusInternalServerError)
-		return
-	}
-
-	sendJSONResponse(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (s *Server) deviceStatusHandler(w http.ResponseWriter, r *http.Request) {
