@@ -83,6 +83,24 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	streamIDStr := streamID.Hex()
 	rtmpURL := fmt.Sprintf("rtmp://%s:%s/live/%s", s.rtmpConfig.Domain, s.rtmpConfig.Port, streamIDStr)
 	playbackURL := fmt.Sprintf("http://%s:%s/playback/%s.flv", s.rtmpConfig.Domain, s.rtmpConfig.HTTPPort, streamIDStr)
+
+	// Parse lat/lng/acc
+	latVal, err := strconv.ParseFloat(latStr, 64)
+	if err != nil {
+		latVal = 0.0
+		log.Printf("Warning: invalid latStr=%q, defaulting to 0", latStr)
+	}
+	lngVal, err := strconv.ParseFloat(lngStr, 64)
+	if err != nil {
+		lngVal = 0.0
+		log.Printf("Warning: invalid lngStr=%q, defaulting to 0", lngStr)
+	}
+	accVal, err := strconv.ParseFloat(acc, 32)
+	if err != nil {
+		accVal = 0.0
+		log.Printf("Warning: invalid acc=%q, defaulting to 0", acc)
+	}
+
 	stream := &database.Stream{
 		ID:          streamID,
 		DeviceId:    deviceID,
@@ -92,9 +110,11 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		Status:      "live",
 		RTMPURL:     rtmpURL,
 		PlaybackURL: playbackURL,
-		Latitude:    latStr,
-		Longitude:   lngStr,
-		LocAccuracy: acc,
+		StartLocation: database.GeoJSONPoint{
+			Type:        "Point",
+			Coordinates: [2]float64{lngVal, latVal}, // [lng, lat]
+		},
+		LocAccuracy: float32(accVal),
 	}
 
 	if eventIDStr != "" {

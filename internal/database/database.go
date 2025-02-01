@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"github.com/Orfen-0/dash-ads-server/internal/config"
 	"log"
 	"time"
 
@@ -10,8 +11,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-
-	"github.com/Orfen-0/dash-ads-server/internal/config"
 )
 
 type MongoDB struct {
@@ -22,20 +21,24 @@ type MongoDB struct {
 	streams *mongo.Collection
 }
 
+type GeoJSONPoint struct {
+	Type        string     `bson:"type"`        // "Point"
+	Coordinates [2]float64 `bson:"coordinates"` // [lng, lat]
+}
+
 type Stream struct {
-	ID          primitive.ObjectID  `bson:"_id,omitempty"`
-	EventID     *primitive.ObjectID `bson:"eventId,omitempty"`
-	DeviceId    string              `bson:"deviceId"`
-	Title       string              `bson:"title"`
-	Description string              `bson:"description"`
-	StartTime   time.Time           `bson:"startTime"`
-	EndTime     *time.Time          `bson:"endTime,omitempty"`
-	Status      string              `bson:"status"`
-	RTMPURL     string              `bson:"rtmpUrl"`
-	PlaybackURL string              `bson:"playbackUrl"`
-	Latitude    string              `bson:"latitude"`
-	Longitude   string              `bson:"longitude"`
-	LocAccuracy string              `bson:"locAccuracy"`
+	ID            primitive.ObjectID  `bson:"_id,omitempty"`
+	EventID       *primitive.ObjectID `bson:"eventId,omitempty"`
+	DeviceId      string              `bson:"deviceId"`
+	Title         string              `bson:"title"`
+	Description   string              `bson:"description"`
+	StartTime     time.Time           `bson:"startTime"`
+	EndTime       *time.Time          `bson:"endTime,omitempty"`
+	Status        string              `bson:"status"`
+	RTMPURL       string              `bson:"rtmpUrl"`
+	PlaybackURL   string              `bson:"playbackUrl"`
+	StartLocation GeoJSONPoint        `bson:"startLocation"`
+	LocAccuracy   float32             `bson:"locAccuracy"`
 }
 
 type Device struct {
@@ -44,7 +47,9 @@ type Device struct {
 	Model         string             `bson:"model"`
 	Manufacturer  string             `bson:"manufacturer"`
 	OsVersion     string             `bson:"osVersion"`
-	LastLocation  DeviceLocation     `bson:"lastLocation"`
+	LastLocation  GeoJSONPoint       `bson:"lastLocation"`
+	LocAccuracy   float32            `bson:"locAccuracy"`
+	LocUpdate     time.Time          `bson:"locUpdate"`
 	RegisteredAt  time.Time          `bson:"registeredAt"`
 	LastUpdatedAt time.Time          `bson:"lastUpdatedAt"`
 }
@@ -69,6 +74,62 @@ type Event struct {
 type EventLocation struct {
 	Latitude  float64 `bson:"latitude"`
 	Longitude float64 `bson:"longitude"`
+}
+
+func NewMongoDB(cfg *config.MongoDBConfig) (*MongoDB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fmt.Printf("Connecting to MongoDB with URI: %s\n", cfg.URI)
+
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
+	}
+
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
+	}
+	fmt.Println("Successfully connected to MongoDB")
+
+	db := client.Database(cfg.Database)
+	collections, err := db.ListCollectionNames(ctx, bson.M{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list collections: %w", err)
+	}
+	fmt.Printf("Available collections: %v\n", collections)
+
+	return &MongoDB{
+		client:  client,
+		db:      db,
+		devices: db.Collection("devices"),
+		events:  db.Collection("events"),
+		streams: db.Collection("streams"),
+	}, nil
+}
+
+func (m *MongoDB) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return m.client.Disconnect(ctx)
+}
+
+func (m *MongoDB) GetDevice(deviceID string) (*Device, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	collection := m.db.Collection("devices")
+	var device Device
+	err := collection.FindOne(ctx, bson.M{"deviceId": deviceID}).Decode(&device)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("device not found")
+		}
+		return nil, fmt.Errorf("failed to get device: %w", err)
+	}
+
+	return &device, nil
 }
 
 func (m *MongoDB) RegisterDevice(device *Device) error {
@@ -186,9 +247,21 @@ func (m *MongoDB) ListEventsByDateRange(from, to time.Time) ([]*Event, error) {
 	return results, nil
 }
 
-func (m *MongoDB) UpdateDeviceLocation(deviceID string, location DeviceLocation) error {
+func (m *MongoDB) UpdateDeviceLocation(deviceID string, loc DeviceLocation) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Convert timestamp (milliseconds) to time.Time
+	updateTime := time.Unix(
+		loc.Timestamp/1000,
+		(loc.Timestamp%1000)*int64(time.Millisecond),
+	)
+
+	// Construct GeoJSON point
+	geoPoint := GeoJSONPoint{
+		Type:        "Point",
+		Coordinates: [2]float64{loc.Longitude, loc.Latitude}, // [lng, lat]
+	}
 
 	collection := m.db.Collection("devices")
 	result, err := collection.UpdateOne(
@@ -196,12 +269,13 @@ func (m *MongoDB) UpdateDeviceLocation(deviceID string, location DeviceLocation)
 		bson.M{"deviceId": deviceID},
 		bson.M{
 			"$set": bson.M{
-				"lastLocation":  location,
+				"lastLocation":  geoPoint,
+				"locAccuracy":   loc.Accuracy,
+				"locUpdate":     updateTime,
 				"lastUpdatedAt": time.Now(),
 			},
 		},
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to update device location: %w", err)
 	}
@@ -213,60 +287,52 @@ func (m *MongoDB) UpdateDeviceLocation(deviceID string, location DeviceLocation)
 	return nil
 }
 
-func (m *MongoDB) GetDevice(deviceID string) (*Device, error) {
+func (m *MongoDB) FindDevicesInRadius(lat, lng float64, radiusKM float64) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// MongoDB's $maxDistance expects meters
+	radiusMeters := radiusKM * 1000
+
+	// GeoJSON $near query
+	filter := bson.M{
+		"lastLocation": bson.M{
+			"$near": bson.M{
+				"$geometry": bson.M{
+					"type":        "Point",
+					"coordinates": []float64{lng, lat}, // [lng, lat]
+				},
+				"$maxDistance": radiusMeters, // in meters
+			},
+		},
+	}
+
+	// We'll project only deviceId to keep it lightweight
+	projection := bson.M{"deviceId": 1}
 
 	collection := m.db.Collection("devices")
-	var device Device
-	err := collection.FindOne(ctx, bson.M{"deviceId": deviceID}).Decode(&device)
+	cursor, err := collection.Find(ctx, filter, options.Find().SetProjection(projection))
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, fmt.Errorf("device not found")
+		return nil, fmt.Errorf("failed to find devices in radius: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result []string
+	for cursor.Next(ctx) {
+		var doc struct {
+			DeviceID string `bson:"deviceId"`
 		}
-		return nil, fmt.Errorf("failed to get device: %w", err)
+		if err := cursor.Decode(&doc); err != nil {
+			log.Printf("Error decoding device doc: %v", err)
+			continue
+		}
+		result = append(result, doc.DeviceID)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("cursor error: %w", err)
 	}
 
-	return &device, nil
-}
-
-func NewMongoDB(cfg *config.MongoDBConfig) (*MongoDB, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	fmt.Printf("Connecting to MongoDB with URI: %s\n", cfg.URI)
-
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
-	}
-
-	err = client.Ping(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
-	}
-	fmt.Println("Successfully connected to MongoDB")
-
-	db := client.Database(cfg.Database)
-	collections, err := db.ListCollectionNames(ctx, bson.M{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list collections: %w", err)
-	}
-	fmt.Printf("Available collections: %v\n", collections)
-
-	return &MongoDB{
-		client:  client,
-		db:      db,
-		devices: db.Collection("devices"),
-		events:  db.Collection("events"),
-		streams: db.Collection("streams"),
-	}, nil
-}
-
-func (m *MongoDB) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return m.client.Disconnect(ctx)
+	return result, nil
 }
 
 func (m *MongoDB) CreateStream(stream *Stream) error {

@@ -90,6 +90,8 @@ func (mc *MQTTClient) PublishStartStream(deviceID string, eventID primitive.Obje
 // handleLocationMessage is the callback for "devices/+/location" messages.
 func (mc *MQTTClient) handleLocationMessage(client MQTT.Client, msg MQTT.Message) {
 	// The topic might look like: "devices/myDevice123/location"
+	log.Printf("locaiton message received %s", msg.Topic())
+
 	topicParts := strings.Split(msg.Topic(), "/")
 	if len(topicParts) < 3 {
 		log.Printf("Invalid location topic: %s", msg.Topic())
