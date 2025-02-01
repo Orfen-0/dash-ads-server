@@ -24,6 +24,19 @@ func NewMinIOStorage(cfg *config.MinIOConfig) (*MinIOStorage, error) {
 		return nil, err
 	}
 
+	ctx := context.Background()
+	exists, err := client.BucketExists(ctx, cfg.Bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	if !exists {
+		err = client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &MinIOStorage{
 		client: client,
 		Bucket: cfg.Bucket,
