@@ -72,15 +72,16 @@ func (mc *MQTTClient) subscribeToAcks() {
 	}
 }
 
-// PublishStartStream publishes a JSON command telling the device to start streaming for a given event.
 func (mc *MQTTClient) PublishStartStream(deviceID string, eventID primitive.ObjectID) error {
-	topic := fmt.Sprintf("devices/%s/commands", deviceID)
+	topic := fmt.Sprintf("devices/%s/cmd", deviceID)
+
 	// A simple JSON payload
 	payload := map[string]string{
 		"command": "startStream",
 		"eventId": eventID.Hex(),
 	}
 	data, _ := json.Marshal(payload)
+	log.Printf("forwarding command to % command topic", deviceID)
 
 	token := mc.client.Publish(topic, 0, false, data)
 	token.Wait()
@@ -113,8 +114,8 @@ func (mc *MQTTClient) handleLocationMessage(client MQTT.Client, msg MQTT.Message
 
 	// Update DB: location
 	location := database.DeviceLocation{
-		Latitude:  locPayload.Latitude,
 		Longitude: locPayload.Longitude,
+		Latitude:  locPayload.Latitude,
 		Accuracy:  locPayload.Accuracy,
 		Timestamp: locPayload.Timestamp,
 	}

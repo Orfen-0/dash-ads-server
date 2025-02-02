@@ -24,6 +24,7 @@ type Server struct {
 	httpServer *http.Server
 	rtmpServer *rtmp.Server
 	db         *database.MongoDB
+	mq         *mqttclient.MQTTClient
 }
 
 type Config struct {
@@ -69,6 +70,7 @@ func NewServer(config *config.HTTPConfig, rtmpServer *rtmp.Server, mq *mqttclien
 		config:     config,
 		rtmpServer: rtmpServer,
 		db:         db,
+		mq:         mq,
 	}
 }
 
@@ -234,9 +236,9 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 		ID:          primitive.NewObjectID(),
 		TriggeredBy: req.TriggeredBy,
 		StartTime:   time.Now(),
-		Location: database.EventLocation{
-			Latitude:  req.Latitude,
-			Longitude: req.Longitude,
+		Location: database.GeoJSONPoint{
+			Type:        "Point",
+			Coordinates: [2]float64{req.Longitude, req.Latitude},
 		},
 		Radius: req.Radius,
 		Status: "active",
@@ -248,15 +250,23 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create event", http.StatusInternalServerError)
 		return
 	}
+	devices, err := s.db.FindDevicesInRadius(evt.Location.Coordinates[0], evt.Location.Coordinates[1], evt.Radius)
+	if err != nil {
+		http.Error(w, "Failed to find devices", http.StatusInternalServerError)
+		return
+	}
 
-	// (Optional) you might find nearby devices + push "start stream" commands here
-	// e.g.: s.pushStartStreamToNearbyDevices(evt)
-
+	for _, deviceID := range devices {
+		if err := s.mq.PublishStartStream(deviceID, evt.ID); err != nil {
+			log.Printf("Error publishing start stream for device %s: %v", deviceID, err)
+		}
+	}
 	// Return the newly created event ID
 	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"eventId": evt.ID.Hex(),
-		"status":  evt.Status,
-		"message": "Event created successfully",
+		"eventId":            evt.ID.Hex(),
+		"status":             evt.Status,
+		"nearbyDevicesCount": len(devices),
+		"message":            "Event created successfully",
 	})
 }
 

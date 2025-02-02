@@ -66,7 +66,7 @@ type Event struct {
 	TriggeredBy string             `bson:"triggeredBy"` // e.g. which user/device triggered it
 	StartTime   time.Time          `bson:"startTime"`
 	EndTime     *time.Time         `bson:"endTime,omitempty"`
-	Location    EventLocation      `bson:"location"`
+	Location    GeoJSONPoint       `bson:"location"`
 	Radius      float64            `bson:"radius"`
 	Status      string             `bson:"status"` // e.g. "active", "ended"
 }
@@ -287,14 +287,13 @@ func (m *MongoDB) UpdateDeviceLocation(deviceID string, loc DeviceLocation) erro
 	return nil
 }
 
-func (m *MongoDB) FindDevicesInRadius(lat, lng float64, radiusKM float64) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (m *MongoDB) FindDevicesInRadius(lng, lat float64, radiusKM float64) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second) // increased timeout
 	defer cancel()
 
-	// MongoDB's $maxDistance expects meters
 	radiusMeters := radiusKM * 1000
 
-	// GeoJSON $near query
+	// Build the geo query filter.
 	filter := bson.M{
 		"lastLocation": bson.M{
 			"$near": bson.M{
@@ -302,17 +301,21 @@ func (m *MongoDB) FindDevicesInRadius(lat, lng float64, radiusKM float64) ([]str
 					"type":        "Point",
 					"coordinates": []float64{lng, lat}, // [lng, lat]
 				},
-				"$maxDistance": radiusMeters, // in meters
+				"$maxDistance": radiusMeters,
 			},
 		},
 	}
 
-	// We'll project only deviceId to keep it lightweight
+	// Log the filter for debugging.
+	log.Printf("Geo query filter: %+v", filter)
+
+	// Project only the deviceId field.
 	projection := bson.M{"deviceId": 1}
 
 	collection := m.db.Collection("devices")
 	cursor, err := collection.Find(ctx, filter, options.Find().SetProjection(projection))
 	if err != nil {
+		log.Printf("Error executing Find: %v", err)
 		return nil, fmt.Errorf("failed to find devices in radius: %w", err)
 	}
 	defer cursor.Close(ctx)
@@ -323,15 +326,17 @@ func (m *MongoDB) FindDevicesInRadius(lat, lng float64, radiusKM float64) ([]str
 			DeviceID string `bson:"deviceId"`
 		}
 		if err := cursor.Decode(&doc); err != nil {
-			log.Printf("Error decoding device doc: %v", err)
+			log.Printf("Error decoding document: %v", err)
 			continue
 		}
 		result = append(result, doc.DeviceID)
 	}
 	if err := cursor.Err(); err != nil {
+		log.Printf("Cursor error: %v", err)
 		return nil, fmt.Errorf("cursor error: %w", err)
 	}
 
+	log.Printf("Found %d devices", len(result))
 	return result, nil
 }
 
