@@ -8,6 +8,7 @@ import (
 	"github.com/Orfen-0/dash-ads-server/internal/database"
 	"github.com/Orfen-0/dash-ads-server/internal/mqttclient"
 	"github.com/Orfen-0/dash-ads-server/internal/rtmp"
+	"github.com/Orfen-0/dash-ads-server/internal/utils"
 	"github.com/nareix/joy4/av"
 	"github.com/nareix/joy4/format/flv"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -65,6 +66,29 @@ type DeviceStatusResponse struct {
 	IsRegistered bool `json:"isRegistered"`
 }
 
+type EventResponse struct {
+	ID          string                `json:"id"`
+	TriggeredBy string                `json:"triggeredBy"`
+	StartTime   int64                 `json:"startTime"` // Unix timestamp
+	Location    database.GeoJSONPoint `json:"location"`  // You may want to further process this if needed
+	Radius      float64               `json:"radius"`
+	Status      string                `json:"status"`
+	Streams     []StreamResponse      `json:"streams"`
+}
+
+type StreamResponse struct {
+	ID          string                `json:"id"`
+	Title       string                `json:"title"`
+	PlaybackUrl string                `json:"playbackUrl"`
+	RTMPUrl     string                `json:"rtmpUrl"`
+	DeviceId    string                `json:"deviceId"`
+	Distance    float64               `json:"distance"`
+	Location    database.GeoJSONPoint `json:"location"`
+	StartTime   int64                 `json:"startTime"`         // Unix timestamp
+	EndTime     *int64                `json:"endTime,omitempty"` // Unix timestamp
+
+}
+
 func NewServer(config *config.HTTPConfig, rtmpServer *rtmp.Server, mq *mqttclient.MQTTClient, db *database.MongoDB) *Server {
 	return &Server{
 		config:     config,
@@ -96,6 +120,7 @@ func (s *Server) Start() error {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	mux.HandleFunc("/events-streams", s.getEventsWithStreams)
 
 	s.httpServer = &http.Server{
 		Addr:    ":" + s.config.Port,
@@ -275,8 +300,6 @@ func (s *Server) listEventsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	// Parse optional query params ?from=YYYY-MM-DD&to=YYYY-MM-DD
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
 
@@ -284,18 +307,23 @@ func (s *Server) listEventsHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if fromStr != "" {
-		fromTime, err = time.Parse("2006-01-02", fromStr)
+		var fromUnix int64
+		_, err = fmt.Sscanf(fromStr, "%d", &fromUnix)
 		if err != nil {
-			http.Error(w, "Invalid 'from' date format, use YYYY-MM-DD", http.StatusBadRequest)
+			http.Error(w, "Invalid 'from' parameter. It should be a Unix timestamp.", http.StatusBadRequest)
 			return
 		}
+		fromTime = time.Unix(fromUnix, 0)
 	}
+
 	if toStr != "" {
-		toTime, err = time.Parse("2006-01-02", toStr)
+		var toUnix int64
+		_, err = fmt.Sscanf(toStr, "%d", &toUnix)
 		if err != nil {
-			http.Error(w, "Invalid 'to' date format, use YYYY-MM-DD", http.StatusBadRequest)
+			http.Error(w, "Invalid 'to' parameter. It should be a Unix timestamp.", http.StatusBadRequest)
 			return
 		}
+		toTime = time.Unix(toUnix, 0)
 	}
 
 	// Query DB for events
@@ -307,6 +335,91 @@ func (s *Server) listEventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSONResponse(w, http.StatusOK, events)
+}
+
+func (s *Server) getEventsWithStreams(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+
+	var fromTime, toTime time.Time
+	var err error
+
+	if fromStr != "" {
+		var fromUnix int64
+		_, err = fmt.Sscanf(fromStr, "%d", &fromUnix)
+		if err != nil {
+			http.Error(w, "Invalid 'from' parameter. It should be a Unix timestamp.", http.StatusBadRequest)
+			return
+		}
+		fromTime = time.Unix(fromUnix, 0)
+	}
+
+	if toStr != "" {
+		var toUnix int64
+		_, err = fmt.Sscanf(toStr, "%d", &toUnix)
+		if err != nil {
+			http.Error(w, "Invalid 'to' parameter. It should be a Unix timestamp.", http.StatusBadRequest)
+			return
+		}
+		toTime = time.Unix(toUnix, 0)
+	}
+
+	events, err := s.db.ListEventsByDateRange(fromTime, toTime)
+	if err != nil {
+		log.Printf("Error listing events: %v", err)
+		http.Error(w, "Failed to list events", http.StatusInternalServerError)
+		return
+	}
+	var responses []EventResponse
+	for _, event := range events {
+		// Get streams for this event.
+		streams, err := s.db.GetStreamsByEventId(event.ID)
+		if err != nil {
+			log.Printf("Error getting streams for event %s: %v", event.ID.Hex(), err)
+			// Optionally continue to next event or send error response.
+			continue
+		}
+
+		// Convert streams to response format.
+		var streamResponses []StreamResponse
+		for _, stream := range streams {
+			var distance = utils.HaversineDistance(event.Location, stream.StartLocation)
+			var endTime *int64
+			if stream.EndTime != nil && !stream.EndTime.IsZero() {
+				t := stream.EndTime.Unix()
+				endTime = &t
+			}
+
+			streamResponses = append(streamResponses, StreamResponse{
+				ID:          stream.ID.Hex(),
+				Title:       stream.Title,
+				RTMPUrl:     stream.RTMPURL, // Adjust this if you need to build a full URL.
+				PlaybackUrl: stream.PlaybackURL,
+				DeviceId:    stream.DeviceId,
+				Location:    stream.StartLocation,
+				StartTime:   stream.StartTime.Unix(),
+				EndTime:     endTime,
+				Distance:    distance,
+			})
+		}
+
+		responses = append(responses, EventResponse{
+			ID:          event.ID.Hex(),
+			TriggeredBy: event.TriggeredBy,
+			StartTime:   event.StartTime.Unix(), // Convert Date to Unix timestamp
+			Location:    event.Location,         // If you need to change format, do it here.
+			Radius:      event.Radius,
+			Status:      event.Status,
+			Streams:     streamResponses,
+		})
+	}
+
+	sendJSONResponse(w, http.StatusOK, responses)
 }
 
 func (s *Server) handleHTTPPlayFLV(w http.ResponseWriter, r *http.Request) {

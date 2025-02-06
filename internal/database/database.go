@@ -368,6 +368,31 @@ func (m *MongoDB) GetStream(id primitive.ObjectID) (*Stream, error) {
 	return &stream, nil
 }
 
+func (m *MongoDB) GetStreamsByEventId(id primitive.ObjectID) ([]*Stream, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cursor, err := m.streams.Find(ctx, bson.M{"eventId": id})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query streams: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []*Stream
+	for cursor.Next(ctx) {
+		var e Stream
+		if err := cursor.Decode(&e); err != nil {
+			log.Printf("Error decoding stream doc: %v", err)
+			continue
+		}
+		results = append(results, &e)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("cursor error: %w", err)
+	}
+	return results, nil
+}
+
 func (m *MongoDB) UpdateStreamStatus(id primitive.ObjectID, status string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
