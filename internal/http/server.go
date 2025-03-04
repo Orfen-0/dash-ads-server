@@ -16,7 +16,7 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"path/filepath"
+	"os"
 	"strings"
 	"time"
 )
@@ -543,13 +543,15 @@ func sendJSONResponse(w http.ResponseWriter, status int, data interface{}) {
 }
 
 func (s *Server) ServeAPK(w http.ResponseWriter, r *http.Request) {
-	apkFilePath := "./files/app.apk" // Adjust the path to where your APK is stored
-	apkFileName := filepath.Base(apkFilePath)
+	apkFilePath := "internal/files/app.apk" // Adjust path if needed
 
-	// Set headers to prompt file download
-	w.Header().Set("Content-Disposition", "attachment; filename="+apkFileName)
+	if _, err := os.Stat(apkFilePath); os.IsNotExist(err) {
+		http.Error(w, "APK file not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=app-release.apk")
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
 
-	// Serve the file
 	http.ServeFile(w, r, apkFilePath)
 }
