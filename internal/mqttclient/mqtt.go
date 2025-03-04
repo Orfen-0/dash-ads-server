@@ -88,6 +88,21 @@ func (mc *MQTTClient) PublishStartStream(deviceID string, eventID primitive.Obje
 	return token.Error()
 }
 
+func (mc *MQTTClient) PublishStopStream(deviceID string) error {
+	topic := fmt.Sprintf("devices/%s/cmd", deviceID)
+
+	// A simple JSON payload
+	payload := map[string]string{
+		"command": "stopStreaming",
+	}
+	data, _ := json.Marshal(payload)
+	log.Printf("forwarding command to % command topic", deviceID)
+
+	token := mc.client.Publish(topic, 0, false, data)
+	token.Wait()
+	return token.Error()
+}
+
 // handleLocationMessage is the callback for "devices/+/location" messages.
 func (mc *MQTTClient) handleLocationMessage(client MQTT.Client, msg MQTT.Message) {
 	// The topic might look like: "devices/myDevice123/location"

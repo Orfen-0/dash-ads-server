@@ -16,6 +16,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -110,6 +111,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/devices/register", s.registerDeviceHandler)
 	mux.HandleFunc("/devices/", s.deviceStatusHandler)
 	mux.HandleFunc("/playback/", s.handleHTTPPlayFLV)
+	mux.HandleFunc("/download-apk", s.ServeAPK)
+	mux.HandleFunc("/stop-stream", s.stopDeviceStream)
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "POST":
@@ -293,6 +296,18 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 		"nearbyDevicesCount": len(devices),
 		"message":            "Event created successfully",
 	})
+}
+
+func (s *Server) stopDeviceStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	deviceStr := r.URL.Query().Get("deviceId")
+	err := s.mq.PublishStopStream(deviceStr)
+	if err != nil {
+		return
+	}
 }
 
 func (s *Server) listEventsHandler(w http.ResponseWriter, r *http.Request) {
@@ -525,4 +540,16 @@ func sendJSONResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+func (s *Server) ServeAPK(w http.ResponseWriter, r *http.Request) {
+	apkFilePath := "./files/app.apk" // Adjust the path to where your APK is stored
+	apkFileName := filepath.Base(apkFilePath)
+
+	// Set headers to prompt file download
+	w.Header().Set("Content-Disposition", "attachment; filename="+apkFileName)
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+
+	// Serve the file
+	http.ServeFile(w, r, apkFilePath)
 }
