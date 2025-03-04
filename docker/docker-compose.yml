@@ -7,7 +7,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: example
-      MONGOSH_DISABLE_HISTORY: "true"  # Prevent mongosh from creating /data/db/.mongodb
+      MONGOSH_DISABLE_HISTORY: "true"
     ports:
       - "27017:27017"
     volumes:
@@ -16,10 +16,10 @@ services:
     networks:
       - app_network
     healthcheck:
-        test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-        interval: 10s
-        timeout: 5s
-        retries: 5
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   minio:
     image: minio/minio:latest
@@ -56,6 +56,44 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  server:
+    build: ../
+    container_name: go_server
+    environment:
+      RTMP_PORT: "1935"
+      HTTP_PORT: "8080"
+      MONGODB_URI: mongodb://root:example@mongodb:27017
+      MONGODB_DATABASE: dash_ads_server
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_USE_SSL: "false"
+      MINIO_BUCKET: streams
+      RTMP_DOMAIN: "localhost"
+      MQTT_URI: mqtt://mosquitto:1883
+      MQTT_USERNAME:
+      MQTT_PASSWORD:
+    ports:
+      - "8080:8080"
+      - "1935:1935"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  frontend:
+    build: ./frontend
+    container_name: react_frontend
+    environment:
+      REACT_APP_API_URL: "http://server:8080"
+    ports:
+      - "3000:3000"
+    networks:
+      - app_network
 
 networks:
   app_network:
