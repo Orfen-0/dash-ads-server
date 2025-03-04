@@ -3,6 +3,7 @@ module github.com/Orfen-0/dash-ads-server
 go 1.23.0
 
 require (
+	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/joho/godotenv v1.5.1
 	github.com/minio/minio-go/v7 v7.0.76
 	github.com/nareix/joy4 v0.0.0-20200507095837-05a4ffbb5369
@@ -11,7 +12,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/eclipse/paho.mqtt.golang v1.5.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/goccy/go-json v0.10.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
