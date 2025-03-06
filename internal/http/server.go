@@ -87,7 +87,7 @@ type StreamResponse struct {
 	Location    database.GeoJSONPoint `json:"location"`
 	StartTime   int64                 `json:"startTime"`         // Unix timestamp
 	EndTime     *int64                `json:"endTime,omitempty"` // Unix timestamp
-
+	Status      string                `json:"status"`
 }
 
 func NewServer(config *config.HTTPConfig, rtmpServer *rtmp.Server, mq *mqttclient.MQTTClient, db *database.MongoDB) *Server {
@@ -420,6 +420,7 @@ func (s *Server) getEventsWithStreams(w http.ResponseWriter, r *http.Request) {
 				StartTime:   stream.StartTime.Unix(),
 				EndTime:     endTime,
 				Distance:    distance,
+				Status:      stream.Status,
 			})
 		}
 
