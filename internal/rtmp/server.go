@@ -77,7 +77,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		return fmt.Errorf("invalid timestamp")
 	}
 	parsedTime := time.Unix(sec/1000, (sec%1000)*int64(time.Millisecond))
-
+	log.Printf("[RTMP] Incoming stream request | deviceId=%s | eventId=%s | ts=%s | lat=%s | lng=%s | acc=%s", deviceID, eventIDStr, timestamp, latStr, lngStr, acc)
 	// Create stream record
 	streamID := primitive.NewObjectID()
 	streamIDStr := streamID.Hex()
@@ -121,12 +121,15 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		eID, err := primitive.ObjectIDFromHex(eventIDStr)
 		if err == nil {
 			stream.EventID = &eID
+			log.Printf("[RTMP] Associated stream with eventId=%s", eID.Hex())
+
 		}
 	}
 	// Save to database
 	if err := s.db.CreateStream(stream); err != nil {
 		return fmt.Errorf("failed to create stream record: %w", err)
 	}
+	log.Printf("[Mongo] Stream document created | streamId=%s | deviceId=%s", stream.ID.Hex(), deviceID)
 
 	streams, err := conn.Streams()
 	if err != nil {
@@ -139,6 +142,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	pipeReader, pipeWriter := io.Pipe()
 	defer pipeWriter.Close()
 	flvMuxer := flv.NewMuxer(pipeWriter)
+	log.Printf("[RTMP] Stream setup complete | streamId=%s | starting packet loop", streamIDStr)
 
 	if err := flvMuxer.WriteHeader(streams); err != nil {
 		return fmt.Errorf("error writing FLV header: %w", err)
@@ -146,18 +150,21 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 
 	// Start MinIO upload
 	go func() {
+		log.Printf("[MinIO] Upload initiated | path=streams/%s/%s.flv", deviceID, streamIDStr)
 		defer pipeReader.Close()
 		objectPath := fmt.Sprintf("streams/%s/%s.flv", deviceID, streamIDStr)
 		if err := s.Storage.UploadStream(context.Background(), objectPath, pipeReader); err != nil {
 			log.Printf("Failed to upload stream to MinIO: %v", err)
 		}
+		log.Printf("[MinIO] Stream uploaded successfully | streamId=%s", streamIDStr)
+
 	}()
 
 	for {
 		packet, err := conn.ReadPacket()
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("Stream %s ended", streamIDStr)
+				log.Printf("[RTMP] Stream ended cleanly | streamId=%s", streamIDStr)
 
 				s.LiveStreamManager.RemovePublisher(streamIDStr)
 				s.LiveStreamManager.CloseAllClients(streamIDStr)
@@ -177,6 +184,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	if err := s.db.EndStream(stream.ID); err != nil {
 		log.Printf("Failed to mark stream as ended: %v", err)
 	}
+	log.Printf("[Mongo] Stream marked as ended | streamId=%s", streamIDStr)
 
 	return nil
 }

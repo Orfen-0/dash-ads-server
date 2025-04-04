@@ -166,6 +166,20 @@ func (m *MongoDB) RegisterDevice(device *Device) error {
 	return err
 }
 
+func (db *MongoDB) MarkEventAsFinished(id primitive.ObjectID) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	update := bson.M{
+		"$set": bson.M{
+			"status":  "finished",
+			"endTime": time.Now(),
+		},
+	}
+	_, err := db.events.UpdateByID(ctx, id, update)
+	return err
+}
+
 func (m *MongoDB) CreateEvent(event *Event) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

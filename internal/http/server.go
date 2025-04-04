@@ -113,6 +113,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/playback/", s.handleHTTPPlayFLV)
 	mux.HandleFunc("/download-apk", s.ServeAPK)
 	mux.HandleFunc("/stop-stream", s.stopDeviceStream)
+	mux.HandleFunc("/finish-event", s.finishEventHandler)
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "POST":
@@ -165,6 +166,35 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "OK")
+}
+
+func (s *Server) finishEventHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	eventID := r.URL.Query().Get("id")
+	if eventID == "" {
+		http.Error(w, "Missing event ID", http.StatusBadRequest)
+		return
+	}
+
+	objID, err := primitive.ObjectIDFromHex(eventID)
+	if err != nil {
+		http.Error(w, "Invalid event ID", http.StatusBadRequest)
+		return
+	}
+
+	err = s.db.MarkEventAsFinished(objID)
+	if err != nil {
+		http.Error(w, "Failed to mark event as finished", http.StatusInternalServerError)
+		return
+	}
+
+	sendJSONResponse(w, http.StatusOK, map[string]string{
+		"message": "Event marked as finished",
+	})
 }
 
 func (s *Server) streamsHandler(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +286,8 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	log.Printf("[HTTP] POST /events triggered by %s at %s", req.TriggeredBy, time.Now())
+
 	if req.Radius == 0 {
 		req.Radius = 2.0
 	}
@@ -296,6 +328,7 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 		"nearbyDevicesCount": len(devices),
 		"message":            "Event created successfully",
 	})
+
 }
 
 func (s *Server) stopDeviceStream(w http.ResponseWriter, r *http.Request) {
@@ -390,7 +423,7 @@ func (s *Server) getEventsWithStreams(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to list events", http.StatusInternalServerError)
 		return
 	}
-	var responses []EventResponse
+	responses := make([]EventResponse, 0)
 	for _, event := range events {
 		// Get streams for this event.
 		streams, err := s.db.GetStreamsByEventId(event.ID)

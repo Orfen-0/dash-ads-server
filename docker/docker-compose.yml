@@ -86,7 +86,28 @@ services:
         condition: service_healthy
     networks:
       - app_network
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+    networks:
+      - app_network
 
+  alloy:
+    image: grafana/alloy:latest
+    container_name: alloy
+    volumes:
+      - ./docker_conf/alloy-config.yaml:/etc/alloy/config.yaml
+      - ./server/logs:/var/log/myapp:ro # Replace with your log path
+    command: --config.file=/etc/alloy/config.yaml
+    networks:
+      - app_network
+    depends_on:
+      - loki
   frontend:
     build: ../../stream-viewer
     container_name: react_frontend

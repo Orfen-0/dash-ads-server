@@ -6,6 +6,7 @@ import (
 	"github.com/Orfen-0/dash-ads-server/internal/config"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/Orfen-0/dash-ads-server/internal/database"
 	MQTT "github.com/eclipse/paho.mqtt.golang"
@@ -44,6 +45,7 @@ func NewMQTTClient(cfg *config.MQTTConfig, db *database.MongoDB) (*MQTTClient, e
 	// Now subscribe to relevant topics
 	mc.subscribeToLocationUpdates()
 	mc.subscribeToAcks()
+	mc.subscribeToLogs()
 
 	return mc, nil
 }
@@ -52,6 +54,8 @@ func NewMQTTClient(cfg *config.MQTTConfig, db *database.MongoDB) (*MQTTClient, e
 func (mc *MQTTClient) subscribeToLocationUpdates() {
 	topic := "devices/+/location"
 	token := mc.client.Subscribe(topic, 0, mc.handleLocationMessage)
+	log.Printf("[MQTT] Subscribed to topic: %s", topic)
+
 	token.Wait()
 	if token.Error() != nil {
 		log.Printf("Failed to subscribe to location updates: %v", token.Error())
@@ -60,10 +64,47 @@ func (mc *MQTTClient) subscribeToLocationUpdates() {
 	}
 }
 
+func (mc *MQTTClient) subscribeToLogs() {
+	topic := "devices/+/logs"
+	token := mc.client.Subscribe(topic, 0, mc.handleLogMessage)
+	token.Wait()
+	if token.Error() != nil {
+		log.Printf("Failed to subscribe to log messages: %v", token.Error())
+	} else {
+		log.Printf("Subscribed to log messages on topic: %s", topic)
+	}
+}
+
+func (mc *MQTTClient) handleLogMessage(client MQTT.Client, msg MQTT.Message) {
+	topicParts := strings.Split(msg.Topic(), "/")
+	if len(topicParts) < 3 {
+		log.Printf("Invalid log topic: %s", msg.Topic())
+		return
+	}
+	deviceID := topicParts[1]
+
+	var payload struct {
+		Level     string `json:"level"`
+		Message   string `json:"message"`
+		Timestamp int64  `json:"timestamp"`
+		Tag       string `json:"tag"`
+	}
+
+	if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
+		log.Printf("Invalid log JSON from device %s: %v", deviceID, err)
+		return
+	}
+
+	timestamp := time.UnixMilli(payload.Timestamp).Format("2006-01-02 15:04:05.000")
+	log.Printf("[AndroidLog] [%s] [%s] [%s] %s - %s", timestamp, deviceID, payload.Tag, strings.ToUpper(payload.Level), payload.Message)
+
+}
+
 // subscribeToAcks listens for ack messages, e.g. "devices/<deviceID>/acks".
 func (mc *MQTTClient) subscribeToAcks() {
 	topic := "devices/+/acks"
 	token := mc.client.Subscribe(topic, 0, mc.handleAckMessage)
+	log.Printf("[MQTT] Subscribed to topic: %s", topic)
 	token.Wait()
 	if token.Error() != nil {
 		log.Printf("Failed to subscribe to ACKs: %v", token.Error())
@@ -81,7 +122,7 @@ func (mc *MQTTClient) PublishStartStream(deviceID string, eventID primitive.Obje
 		"eventId": eventID.Hex(),
 	}
 	data, _ := json.Marshal(payload)
-	log.Printf("forwarding command to % command topic", deviceID)
+	log.Printf("[MQTT] Sending startStream command to device %s for event %s", deviceID, eventID.Hex())
 
 	token := mc.client.Publish(topic, 0, false, data)
 	token.Wait()
@@ -96,7 +137,7 @@ func (mc *MQTTClient) PublishStopStream(deviceID string) error {
 		"command": "stopStreaming",
 	}
 	data, _ := json.Marshal(payload)
-	log.Printf("forwarding command to % command topic", deviceID)
+	log.Printf("[MQTT] Sending stopStreaming command to device %s", deviceID)
 
 	token := mc.client.Publish(topic, 0, false, data)
 	token.Wait()
@@ -122,6 +163,8 @@ func (mc *MQTTClient) handleLocationMessage(client MQTT.Client, msg MQTT.Message
 		Accuracy  float32 `json:"accuracy"`
 		Timestamp int64   `json:"timestamp"`
 	}
+	log.Printf("[MQTT] Received location update from %s: lat=%.6f lng=%.6f acc=%.1f", deviceID, locPayload.Latitude, locPayload.Longitude, locPayload.Accuracy)
+
 	if err := json.Unmarshal(msg.Payload(), &locPayload); err != nil {
 		log.Printf("Invalid location JSON from %s: %v", deviceID, err)
 		return
@@ -163,13 +206,8 @@ func (mc *MQTTClient) handleAckMessage(client MQTT.Client, msg MQTT.Message) {
 		return
 	}
 
-	log.Printf("ACK from device %s: command=%s, status=%s", deviceID, ack.Command, ack.Status)
-
-	// e.g. if ack.Command == "startStream" && ack.Status == "ok", we know device is responding
-	// Possibly update DB or log an event
+	log.Printf("[MQTT] Received ACK from device %s: command=%s, status=%s", deviceID, ack.Command, ack.Status)
 	if ack.Command == "startStream" && ack.Status == "ok" {
-		// Mark device as streaming, or store last ack time, etc.
-		log.Printf("Device %s acknowledged start stream", deviceID)
-		// mc.db.SetDeviceStreaming(deviceID, true) // example
+		log.Printf("[MQTT] Device %s successfully acknowledged stream start", deviceID)
 	}
 }

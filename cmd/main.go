@@ -2,7 +2,9 @@ package main
 
 import (
 	"github.com/Orfen-0/dash-ads-server/internal/mqttclient"
+	"io"
 	"log"
+	"os"
 
 	"github.com/Orfen-0/dash-ads-server/internal/config"
 	"github.com/Orfen-0/dash-ads-server/internal/database"
@@ -16,6 +18,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	logFile, err := os.OpenFile("logs/server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	multi := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(multi)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
 
 	// Initialize MinIO storage
 	minioStorage, err := storage.NewMinIOStorage(&cfg.Storage)
