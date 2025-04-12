@@ -19,6 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
+RUN mkdir -p /root/logs
 
 # Copy the built server binary from the builder stage
 COPY --from=builder /app/server .

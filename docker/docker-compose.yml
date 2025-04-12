@@ -86,12 +86,14 @@ services:
         condition: service_healthy
     networks:
       - app_network
+    volumes:
+      - ./server/logs:/root/logs
   loki:
     image: grafana/loki:2.9.2
     container_name: loki
     ports:
       - "3100:3100"
-    command: -config.file=/etc/loki/loki-config.yaml
+    command: [ "run", "--config.file=/etc/alloy/config.yaml" ]
     volumes:
       - ./docker_conf/loki-config.yaml:/etc/loki/loki-config.yaml
     networks:
