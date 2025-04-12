@@ -93,33 +93,51 @@ services:
     container_name: loki
     ports:
       - "3100:3100"
-    command: [ "run", "--config.file=/etc/alloy/config.yaml" ]
+    command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - ./docker_conf/loki-config.yaml:/etc/loki/loki-config.yaml
+      - ./docker_conf/loki-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
     networks:
       - app_network
-
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
   alloy:
     image: grafana/alloy:latest
     container_name: alloy
+    command: run /etc/alloy/config.alloy
     volumes:
-      - ./docker_conf/alloy-config.yaml:/etc/alloy/config.yaml
-      - ./server/logs:/var/log/myapp:ro # Replace with your log path
-    command: --config.file=/etc/alloy/config.yaml
+      - ./docker_conf/alloy-config.hcl:/etc/alloy/config.alloy
+      - ./server/logs:/var/log/myapp:ro
+    depends_on:
+      loki:
+        condition: service_healthy
     networks:
       - app_network
-    depends_on:
-      - loki
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - app_network
+
   frontend:
     build: ../../stream-viewer
     container_name: react_frontend
     environment:
-      REACT_APP_API_URL: "http://localhost:8080"
+      REACT_APP_API_URL: "http://195.251.127.196:8080"
     ports:
       - "3000:3000"
     networks:
       - app_network
-
 networks:
   app_network:
     driver: bridge
@@ -127,3 +145,5 @@ networks:
 volumes:
   mongodb_data:
   minio_data:
+  loki_data:
+  grafana_data:
