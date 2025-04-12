@@ -91,9 +91,9 @@ services:
     container_name: loki
     ports:
       - "3100:3100"
-    command: -config.file=/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/loki-config.yaml
     volumes:
-      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - ./docker_conf/loki-config.yaml:/etc/loki/loki-config.yaml
     networks:
       - app_network
 
