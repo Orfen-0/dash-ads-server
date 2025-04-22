@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/Orfen-0/dash-ads-server/internal/config"
 	"github.com/Orfen-0/dash-ads-server/internal/database"
+	"github.com/Orfen-0/dash-ads-server/internal/logging"
 	"github.com/Orfen-0/dash-ads-server/internal/mqttclient"
 	"github.com/Orfen-0/dash-ads-server/internal/rtmp"
 	"github.com/Orfen-0/dash-ads-server/internal/utils"
@@ -14,7 +15,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -90,6 +90,8 @@ type StreamResponse struct {
 	Status      string                `json:"status"`
 }
 
+var logger = logging.New("http")
+
 func NewServer(config *config.HTTPConfig, rtmpServer *rtmp.Server, mq *mqttclient.MQTTClient, db *database.MongoDB) *Server {
 	return &Server{
 		config:     config,
@@ -131,7 +133,7 @@ func (s *Server) Start() error {
 		Handler: handler,
 	}
 
-	log.Printf("Starting HTTP server on port %s", s.config.Port)
+	logger.Info("Starting HTTP server on port %s", s.config.Port)
 	return s.httpServer.ListenAndServe()
 }
 
@@ -144,7 +146,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.RequestURI, time.Since(start))
+		logger.Info("Request", "method", r.Method, "uri", r.RequestURI, "timeLapsed", time.Since(start))
 	})
 }
 
@@ -229,7 +231,7 @@ func (s *Server) registerDeviceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.db.RegisterDevice(device); err != nil {
-		log.Printf("Error registering device: %v", err)
+		logger.Error("Error registering device", "err", err)
 		http.Error(w, "Failed to register device", http.StatusInternalServerError)
 		return
 	}
@@ -265,7 +267,7 @@ func (s *Server) deviceStatusHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Printf("Error checking device status: %v", err)
+		logger.Error("Error checking device status", "err", err)
 		http.Error(w, "Failed to check device status", http.StatusInternalServerError)
 		return
 	}
@@ -286,7 +288,7 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[HTTP] POST /events triggered by %s at %s", req.TriggeredBy, time.Now())
+	logger.Info("POST /events triggered", "triggeredBy", req.TriggeredBy)
 
 	if req.Radius == 0 {
 		req.Radius = 2.0
@@ -306,7 +308,7 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Insert event in DB
 	if err := s.db.CreateEvent(evt); err != nil {
-		log.Printf("Error creating event: %v", err)
+		logger.Error("Error creating event", "err", err)
 		http.Error(w, "Failed to create event", http.StatusInternalServerError)
 		return
 	}
@@ -318,7 +320,7 @@ func (s *Server) createEventHandler(w http.ResponseWriter, r *http.Request) {
 
 	for _, deviceID := range devices {
 		if err := s.mq.PublishStartStream(deviceID, evt.ID); err != nil {
-			log.Printf("Error publishing start stream for device %s: %v", deviceID, err)
+			logger.Error("Error publishing start stream for device %s: %v", deviceID, err)
 		}
 	}
 	// Return the newly created event ID
@@ -377,7 +379,7 @@ func (s *Server) listEventsHandler(w http.ResponseWriter, r *http.Request) {
 	// Query DB for events
 	events, err := s.db.ListEventsByDateRange(fromTime, toTime)
 	if err != nil {
-		log.Printf("Error listing events: %v", err)
+		logger.Error("Error listing events", "err", err)
 		http.Error(w, "Failed to list events", http.StatusInternalServerError)
 		return
 	}
@@ -419,7 +421,7 @@ func (s *Server) getEventsWithStreams(w http.ResponseWriter, r *http.Request) {
 
 	events, err := s.db.ListEventsByDateRange(fromTime, toTime)
 	if err != nil {
-		log.Printf("Error listing events: %v", err)
+		logger.Error("Error listing events", "err", err)
 		http.Error(w, "Failed to list events", http.StatusInternalServerError)
 		return
 	}
@@ -428,7 +430,7 @@ func (s *Server) getEventsWithStreams(w http.ResponseWriter, r *http.Request) {
 		// Get streams for this event.
 		streams, err := s.db.GetStreamsByEventId(event.ID)
 		if err != nil {
-			log.Printf("Error getting streams for event %s: %v", event.ID.Hex(), err)
+			logger.Error("Error getting streams for event %s: %v", event.ID.Hex(), err)
 			// Optionally continue to next event or send error response.
 			continue
 		}
@@ -522,7 +524,7 @@ func (s *Server) serveRecordedFLV(w http.ResponseWriter, r *http.Request, dbStre
 
 	// Stream the FLV file to the client
 	if _, err := io.Copy(w, flvFileReader); err != nil {
-		log.Printf("Error streaming recorded FLV: %v", err)
+		logger.Error("Error streaming recorded FLV", "err", err)
 	}
 }
 
@@ -555,7 +557,7 @@ func (s *Server) serveLiveFLV(w http.ResponseWriter, r *http.Request, streamIDSt
 	flvMuxer := flv.NewMuxer(w)
 	// Write FLV header to the HTTP response
 	if err := flvMuxer.WriteHeader(ls.Streams); err != nil {
-		log.Printf("Failed to write FLV header to HTTP-FLV client: %v", err)
+		logger.Error("Failed to write FLV header to HTTP-FLV client", "err", err)
 		return
 	}
 	flusher.Flush()
@@ -563,7 +565,7 @@ func (s *Server) serveLiveFLV(w http.ResponseWriter, r *http.Request, streamIDSt
 	// Stream packets to the client
 	for packet := range clientChan {
 		if err := flvMuxer.WritePacket(packet); err != nil {
-			log.Printf("Failed to write FLV packet to HTTP-FLV client: %v", err)
+			logger.Error("Failed to write FLV packet to HTTP-FLV client", "err", err)
 			break
 		}
 		flusher.Flush()

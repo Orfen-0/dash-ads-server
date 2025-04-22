@@ -2,8 +2,8 @@ package database
 
 import (
 	"context"
-	"fmt"
 	"github.com/Orfen-0/dash-ads-server/internal/config"
+	"github.com/Orfen-0/dash-ads-server/internal/logging"
 	"log"
 	"time"
 
@@ -76,29 +76,34 @@ type EventLocation struct {
 	Longitude float64 `bson:"longitude"`
 }
 
+var logger = logging.New("database")
+
 func NewMongoDB(cfg *config.MongoDBConfig) (*MongoDB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	fmt.Printf("Connecting to MongoDB with URI: %s\n", cfg.URI)
+	logger.Info("Connecting to MongoDB with URI: %s\n", cfg.URI)
 
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
+		logger.Error("failed to connect to MongoDB", "err", err)
+		return nil, err
 	}
 
 	err = client.Ping(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
+		logger.Error("failed to ping MongoDB", "err", err)
+		return nil, err
 	}
-	fmt.Println("Successfully connected to MongoDB")
+	logger.Info("Successfully connected to MongoDB")
 
 	db := client.Database(cfg.Database)
 	collections, err := db.ListCollectionNames(ctx, bson.M{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list collections: %w", err)
+		logger.Error("failed to list collections", "err", err)
+		return nil, err
 	}
-	fmt.Printf("Available collections: %v\n", collections)
+	logger.Info("Available collections: %v\n", collections)
 
 	return &MongoDB{
 		client:  client,
@@ -124,9 +129,11 @@ func (m *MongoDB) GetDevice(deviceID string) (*Device, error) {
 	err := collection.FindOne(ctx, bson.M{"deviceId": deviceID}).Decode(&device)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, fmt.Errorf("device not found")
+			logger.Error("device not found", "err", err)
+			return nil, err
 		}
-		return nil, fmt.Errorf("failed to get device: %w", err)
+		logger.Error("failed to get device", "err", err)
+		return nil, err
 	}
 
 	return &device, nil
@@ -186,7 +193,8 @@ func (m *MongoDB) CreateEvent(event *Event) error {
 
 	_, err := m.events.InsertOne(ctx, event)
 	if err != nil {
-		return fmt.Errorf("failed to insert event: %w", err)
+		logger.Error("failed to insert event: %w", "err", err)
+		return err
 	}
 	return nil
 }
@@ -199,9 +207,10 @@ func (m *MongoDB) GetEvent(id primitive.ObjectID) (*Event, error) {
 	err := m.events.FindOne(ctx, bson.M{"_id": id}).Decode(&evt)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, fmt.Errorf("event not found")
+			logger.Error("event not found", "err", err)
+			return nil, err
 		}
-		return nil, fmt.Errorf("failed to get event: %w", err)
+		return nil, err
 	}
 	return &evt, nil
 }
@@ -216,7 +225,8 @@ func (m *MongoDB) UpdateEventStatus(id primitive.ObjectID, status string) error 
 		bson.M{"$set": bson.M{"status": status}},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update event status: %w", err)
+		logger.Error("failed to update event status", "err", err)
+		return err
 	}
 	return nil
 }
@@ -242,7 +252,8 @@ func (m *MongoDB) ListEventsByDateRange(from, to time.Time) ([]*Event, error) {
 
 	cursor, err := m.events.Find(ctx, filter)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query events: %w", err)
+		logger.Error("failed to query events", "err", err)
+		return nil, err
 	}
 	defer cursor.Close(ctx)
 
@@ -256,7 +267,8 @@ func (m *MongoDB) ListEventsByDateRange(from, to time.Time) ([]*Event, error) {
 		results = append(results, &e)
 	}
 	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("cursor error: %w", err)
+		logger.Error("cursor error", "err", err)
+		return nil, err
 	}
 	return results, nil
 }
@@ -291,11 +303,13 @@ func (m *MongoDB) UpdateDeviceLocation(deviceID string, loc DeviceLocation) erro
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update device location: %w", err)
+		logger.Error("failed to update device location", "err", err)
+		return err
 	}
 
 	if result.MatchedCount == 0 {
-		return fmt.Errorf("device not found")
+		logger.Error("device not found")
+		return err
 	}
 
 	return nil
@@ -320,17 +334,13 @@ func (m *MongoDB) FindDevicesInRadius(lng, lat float64, radiusKM float64) ([]str
 		},
 	}
 
-	// Log the filter for debugging.
-	log.Printf("Geo query filter: %+v", filter)
-
-	// Project only the deviceId field.
 	projection := bson.M{"deviceId": 1}
 
 	collection := m.db.Collection("devices")
 	cursor, err := collection.Find(ctx, filter, options.Find().SetProjection(projection))
 	if err != nil {
-		log.Printf("Error executing Find: %v", err)
-		return nil, fmt.Errorf("failed to find devices in radius: %w", err)
+		logger.Error("failed to find devices in radius", "err", err)
+		return nil, err
 	}
 	defer cursor.Close(ctx)
 
@@ -346,8 +356,8 @@ func (m *MongoDB) FindDevicesInRadius(lng, lat float64, radiusKM float64) ([]str
 		result = append(result, doc.DeviceID)
 	}
 	if err := cursor.Err(); err != nil {
-		log.Printf("Cursor error: %v", err)
-		return nil, fmt.Errorf("cursor error: %w", err)
+		logger.Error("cursor error", "err", err)
+		return nil, err
 	}
 
 	log.Printf("Found %d devices", len(result))
@@ -360,7 +370,8 @@ func (m *MongoDB) CreateStream(stream *Stream) error {
 
 	_, err := m.streams.InsertOne(ctx, stream)
 	if err != nil {
-		return fmt.Errorf("failed to insert stream: %w", err)
+		logger.Error("failed to insert stream: ", "err", err)
+		return err
 	}
 
 	return nil
@@ -374,9 +385,11 @@ func (m *MongoDB) GetStream(id primitive.ObjectID) (*Stream, error) {
 	err := m.streams.FindOne(ctx, bson.M{"_id": id}).Decode(&stream)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, fmt.Errorf("stream not found")
+			logger.Error("stream not found")
+			return nil, err
 		}
-		return nil, fmt.Errorf("failed to get stream: %w", err)
+		logger.Error("failed to get stream: ", "err", err)
+		return nil, err
 	}
 
 	return &stream, nil
@@ -388,7 +401,8 @@ func (m *MongoDB) GetStreamsByEventId(id primitive.ObjectID) ([]*Stream, error) 
 
 	cursor, err := m.streams.Find(ctx, bson.M{"eventId": id})
 	if err != nil {
-		return nil, fmt.Errorf("failed to query streams: %w", err)
+		logger.Error("failed to query streams: ", "err", err)
+		return nil, err
 	}
 	defer cursor.Close(ctx)
 
@@ -402,7 +416,8 @@ func (m *MongoDB) GetStreamsByEventId(id primitive.ObjectID) ([]*Stream, error) 
 		results = append(results, &e)
 	}
 	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("cursor error: %w", err)
+		logger.Error("cursor error: ", "err", err)
+		return nil, err
 	}
 	return results, nil
 }
@@ -417,7 +432,8 @@ func (m *MongoDB) UpdateStreamStatus(id primitive.ObjectID, status string) error
 		bson.M{"$set": bson.M{"status": status}},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update stream status: %w", err)
+		logger.Error("failed to update stream status: ", "err", err)
+		return err
 	}
 
 	return nil
@@ -438,7 +454,8 @@ func (m *MongoDB) EndStream(id primitive.ObjectID) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to end stream: %w", err)
+		logger.Error("failed to end stream: ", "err", err)
+		return err
 	}
 
 	return nil
@@ -459,7 +476,8 @@ func (m *MongoDB) ListActiveStreams() ([]*Stream, error) {
 
 	cursor, err := m.streams.Find(ctx, bson.M{"status": "live"})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list active streams: %w", err)
+		logger.Error("failed to list active streams: ", "err", err)
+		return nil, err
 	}
 	defer cursor.Close(ctx)
 
@@ -474,7 +492,8 @@ func (m *MongoDB) ListActiveStreams() ([]*Stream, error) {
 	}
 
 	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("cursor error: %w", err)
+		logger.Error("cursor error: ", "err", err)
+		return nil, err
 	}
 
 	return streams, nil

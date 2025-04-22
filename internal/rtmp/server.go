@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"github.com/Orfen-0/dash-ads-server/internal/config"
 	"github.com/Orfen-0/dash-ads-server/internal/database"
+	"github.com/Orfen-0/dash-ads-server/internal/logging"
 	"github.com/Orfen-0/dash-ads-server/internal/storage"
 	"github.com/nareix/joy4/av"
 	"github.com/nareix/joy4/format/flv"
 	"github.com/nareix/joy4/format/rtmp"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +29,8 @@ type Server struct {
 	LiveStreamManager *LiveStreamManager
 }
 
+var logger = logging.New("rtmp")
+
 func NewServer(cfg *config.RTMPConfig, storage *storage.MinIOStorage, db *database.MongoDB) (*Server, error) {
 	return &Server{
 		rtmpConfig:        cfg,
@@ -45,22 +47,22 @@ func (s *Server) Start() error {
 
 	server.HandlePublish = func(conn *rtmp.Conn) {
 		if err := s.handlePublish(conn); err != nil {
-			log.Printf("Error handling publish: %v", err)
+			logger.Error("Error handling publish", "err", err)
 		}
 	}
 
 	server.HandlePlay = func(conn *rtmp.Conn) {
 		if err := s.handlePlay(conn); err != nil {
-			log.Printf("Error handling play: %v", err)
+			logger.Error("Error handling play", "err", err)
 		}
 	}
 
-	log.Printf("RTMP server starting on %s", server.Addr)
+	logger.Info("RTMP server starting on %s", server.Addr)
 	return server.ListenAndServe()
 }
 
 func (s *Server) handlePublish(conn *rtmp.Conn) error {
-	log.Printf("New publish request from %s", conn.URL)
+	logger.Info("New publish request from %s", conn.URL)
 
 	// Extract parameters
 	latStr := conn.URL.Query().Get("lat")
@@ -70,14 +72,15 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	timestamp := conn.URL.Query().Get("ts")
 	eventIDStr := conn.URL.Query().Get("eventId")
 	if deviceID == "" {
-		return fmt.Errorf("deviceId is required in URL parameters")
+		logger.Error("deviceId is required in URL parameters")
 	}
 	sec, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid timestamp")
+		logger.Error("invalid timestamp")
+		return err
 	}
 	parsedTime := time.Unix(sec/1000, (sec%1000)*int64(time.Millisecond))
-	log.Printf("[RTMP] Incoming stream request | deviceId=%s | eventId=%s | ts=%s | lat=%s | lng=%s | acc=%s", deviceID, eventIDStr, timestamp, latStr, lngStr, acc)
+	logger.Info("Incoming stream request", "deviceId", deviceID, "eventId", eventIDStr)
 	// Create stream record
 	streamID := primitive.NewObjectID()
 	streamIDStr := streamID.Hex()
@@ -88,17 +91,17 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	latVal, err := strconv.ParseFloat(latStr, 64)
 	if err != nil {
 		latVal = 0.0
-		log.Printf("Warning: invalid latStr=%q, defaulting to 0", latStr)
+		logger.Warn("Warning: invalid latStr=%q, defaulting to 0", latStr)
 	}
 	lngVal, err := strconv.ParseFloat(lngStr, 64)
 	if err != nil {
 		lngVal = 0.0
-		log.Printf("Warning: invalid lngStr=%q, defaulting to 0", lngStr)
+		logger.Warn("Warning: invalid lngStr=%q, defaulting to 0", lngStr)
 	}
 	accVal, err := strconv.ParseFloat(acc, 32)
 	if err != nil {
 		accVal = 0.0
-		log.Printf("Warning: invalid acc=%q, defaulting to 0", acc)
+		logger.Warn("Warning: invalid acc=%q, defaulting to 0", acc)
 	}
 
 	stream := &database.Stream{
@@ -121,19 +124,21 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		eID, err := primitive.ObjectIDFromHex(eventIDStr)
 		if err == nil {
 			stream.EventID = &eID
-			log.Printf("[RTMP] Associated stream with eventId=%s", eID.Hex())
+			logger.Info("Associated stream with event id", "eventId", eID.Hex())
 
 		}
 	}
 	// Save to database
 	if err := s.db.CreateStream(stream); err != nil {
-		return fmt.Errorf("failed to create stream record: %w", err)
+		logger.Error("failed to create stream record", "err", err)
+		return err
 	}
-	log.Printf("[Mongo] Stream document created | streamId=%s | deviceId=%s", stream.ID.Hex(), deviceID)
+	logger.Info("Stream document created", "streamId", stream.ID.Hex(), "deviceId", deviceID)
 
 	streams, err := conn.Streams()
 	if err != nil {
-		return fmt.Errorf("error getting codec data: %w", err)
+		logger.Error("error getting codec data", "err", err)
+		return err
 	}
 
 	s.LiveStreamManager.AddPublisher(streamIDStr, conn, streams)
@@ -142,21 +147,22 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	pipeReader, pipeWriter := io.Pipe()
 	defer pipeWriter.Close()
 	flvMuxer := flv.NewMuxer(pipeWriter)
-	log.Printf("[RTMP] Stream setup complete | streamId=%s | starting packet loop", streamIDStr)
+	logger.Info("Stream setup complete. Starting packet loop", "streamId", streamIDStr)
 
 	if err := flvMuxer.WriteHeader(streams); err != nil {
-		return fmt.Errorf("error writing FLV header: %w", err)
+		logger.Error("error writing FLV header", "err", err)
+		return err
 	}
 
 	// Start MinIO upload
 	go func() {
-		log.Printf("[MinIO] Upload initiated | path=streams/%s/%s.flv", deviceID, streamIDStr)
+		logger.Info("Upload initiated", "deviceId", deviceID, "streamId", streamIDStr)
 		defer pipeReader.Close()
 		objectPath := fmt.Sprintf("streams/%s/%s.flv", deviceID, streamIDStr)
 		if err := s.Storage.UploadStream(context.Background(), objectPath, pipeReader); err != nil {
-			log.Printf("Failed to upload stream to MinIO: %v", err)
+			logger.Error("Failed to upload stream to MinIO", "err", err)
 		}
-		log.Printf("[MinIO] Stream uploaded successfully | streamId=%s", streamIDStr)
+		logger.Info("[MinIO] Stream uploaded successfully", "deviceId", deviceID, "streamId", streamIDStr)
 
 	}()
 
@@ -164,27 +170,29 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		packet, err := conn.ReadPacket()
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("[RTMP] Stream ended cleanly | streamId=%s", streamIDStr)
+				logger.Info("[RTMP] Stream ended cleanly", "devideId", deviceID, streamIDStr)
 
 				s.LiveStreamManager.RemovePublisher(streamIDStr)
 				s.LiveStreamManager.CloseAllClients(streamIDStr)
 
 				break
 			}
-			return fmt.Errorf("error reading packet: %w", err)
+			logger.Error("error reading packet", "err", err)
+			return err
 		}
 
 		if err := flvMuxer.WritePacket(packet); err != nil {
-			return fmt.Errorf("error writing packet to FLV: %w", err)
+			logger.Error("error writing packet to FLV", "err", err)
+			return err
 		}
 
 		s.LiveStreamManager.ForwardPacket(streamIDStr, packet)
 	}
 
 	if err := s.db.EndStream(stream.ID); err != nil {
-		log.Printf("Failed to mark stream as ended: %v", err)
+		logger.Error("Failed to mark stream as ended", "err", err)
 	}
-	log.Printf("[Mongo] Stream marked as ended | streamId=%s", streamIDStr)
+	logger.Info("Stream marked as ended", "deviceId", deviceID, "streamId", streamIDStr)
 
 	return nil
 }
@@ -192,24 +200,28 @@ func (s *Server) handlePlay(conn *rtmp.Conn) error {
 	// Extract the stream ID from the path:
 	streamIDStr := strings.TrimPrefix(conn.URL.Path, "/live/")
 	if streamIDStr == "" || streamIDStr == conn.URL.Path {
-		return fmt.Errorf("invalid stream path or missing stream ID")
+		logger.Error("invalid stream path or missing stream ID")
+		return nil
 	}
 
 	// Look up MongoDB to see if status == live or ended
 	objectID, err := primitive.ObjectIDFromHex(streamIDStr)
 	if err != nil {
-		return fmt.Errorf("invalid ObjectID: %w", err)
+		logger.Error("invalid ObjectID", "err", err)
+		return err
 	}
 	dbStream, err := s.db.GetStream(objectID)
 	if err != nil {
-		return fmt.Errorf("failed to get stream: %w", err)
+		logger.Error("failed to get stream", "err", err)
+		return err
 	}
 
 	if dbStream.Status == "live" {
 		// 1) Get the live stream info
 		ls := s.LiveStreamManager.GetPublisher(streamIDStr)
 		if ls == nil {
-			return fmt.Errorf("no live stream found for ID %s", streamIDStr)
+			logger.Error("no live stream found for ID", "streamId", streamIDStr)
+			return err
 		}
 
 		// 2) Create a client with its own packet channel
@@ -223,19 +235,20 @@ func (s *Server) handlePlay(conn *rtmp.Conn) error {
 
 		// 3) Write FLV header (the same streams from the publisher)
 		if err := conn.WriteHeader(ls.Streams); err != nil {
-			return fmt.Errorf("failed to write FLV header: %w", err)
+			logger.Error("failed to write FLV header", "err", err)
+			return err
 		}
 
 		// 4) Continuously read from PacketChan and forward to this client
 		for {
 			packet, ok := <-client.PacketChan
 			if !ok {
-				log.Printf("Client channel closed for stream %s", streamIDStr)
+				logger.Info("Client channel closed for stream", "streamId", streamIDStr)
 				break
 			}
 			// Send packet to the RTMP client
 			if err := conn.WritePacket(packet); err != nil {
-				log.Printf("Failed to write packet to client for stream %s: %v", streamIDStr, err)
+				logger.Error("Failed to write packet to client for stream", "streamId", streamIDStr, "err", err)
 				return err
 			}
 		}
@@ -244,22 +257,25 @@ func (s *Server) handlePlay(conn *rtmp.Conn) error {
 
 	} else if dbStream.Status == "ended" {
 		// Recorded playback from MinIO
-		log.Printf("Playing recorded stream: %s", streamIDStr)
+		logger.Info("Playing recorded stream", "streamId", streamIDStr)
 		objectPath := fmt.Sprintf("streams/%s/%s.flv", dbStream.DeviceId, dbStream.ID.Hex())
 
 		flvFileReader, err := s.Storage.DownloadStream(context.Background(), objectPath)
 		if err != nil {
-			return fmt.Errorf("failed to retrieve stream file: %w", err)
+			logger.Error("failed to retrieve stream file", "err", err)
+			return err
 		}
 		defer flvFileReader.Close()
 
 		demuxer := flv.NewDemuxer(flvFileReader)
 		streams, err := demuxer.Streams()
 		if err != nil {
-			return fmt.Errorf("failed to parse FLV streams: %w", err)
+			logger.Error("failed to parse FLV streams", "err", err)
+			return err
 		}
 		if err := conn.WriteHeader(streams); err != nil {
-			return fmt.Errorf("failed to write RTMP header: %w", err)
+			logger.Error("failed to write RTMP header", "err", err)
+			return err
 		}
 
 		for {
@@ -268,14 +284,16 @@ func (s *Server) handlePlay(conn *rtmp.Conn) error {
 				break
 			}
 			if err != nil {
-				return fmt.Errorf("failed to read FLV packet: %w", err)
+				logger.Error("failed to read FLV packet", "err", err)
+				return err
 			}
 			if err := conn.WritePacket(packet); err != nil {
-				return fmt.Errorf("failed to write packet to RTMP client: %w", err)
+				logger.Error("failed to write packet to RTMP client", "err", err)
+				return err
 			}
 		}
 		return nil
 	}
-
-	return fmt.Errorf("invalid stream status: %s", dbStream.Status)
+	logger.Error("invalid stream status", "status", dbStream.Status)
+	return err
 }

@@ -1,7 +1,6 @@
 package rtmp
 
 import (
-	"log"
 	"sync"
 
 	"github.com/nareix/joy4/av"
@@ -92,7 +91,7 @@ func (m *LiveStreamManager) ForwardPacket(streamID string, packet av.Packet) {
 		// Forward to RTMP clients
 		for client := range stream.RTMPClients {
 			if err := client.WritePacket(packet); err != nil {
-				log.Printf("Failed to write packet to RTMP client: %v", err)
+				logger.Error("Failed to write packet to RTMP client", "err", err)
 			}
 		}
 		// Forward to HTTP-FLV clients
@@ -100,7 +99,7 @@ func (m *LiveStreamManager) ForwardPacket(streamID string, packet av.Packet) {
 			select {
 			case clientChan <- packet:
 			default:
-				log.Printf("HTTP-FLV client channel full, dropping packet")
+				logger.Warn("HTTP-FLV client channel full, dropping packet")
 			}
 		}
 		stream.mu.RUnlock()

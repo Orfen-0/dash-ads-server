@@ -1,7 +1,7 @@
 package config
 
 import (
-	"fmt"
+	"github.com/Orfen-0/dash-ads-server/internal/logging"
 	"net"
 	"os"
 
@@ -44,11 +44,13 @@ type MQTTConfig struct {
 	Password string
 }
 
+var logger = logging.New("init")
+
 func Load() (*Config, error) {
 	// Load .env file
 	err := godotenv.Load(".env.local")
 	if err != nil {
-		fmt.Println("Warning: Error loading .env file")
+		logger.Error("Warning: Error loading .env file")
 	}
 
 	config := &Config{
@@ -99,7 +101,7 @@ func getFallbackDomain() string {
 	// Try to determine the local IP address
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		fmt.Println("Error getting local IP:", err)
+		logger.Warn("Error getting local IP:", err)
 		return "localhost" // Fallback to localhost
 	}
 
