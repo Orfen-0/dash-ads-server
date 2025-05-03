@@ -63,6 +63,7 @@ func (s *Server) Start() error {
 
 func (s *Server) handlePublish(conn *rtmp.Conn) error {
 	logger.Info("New publish request from %s", conn.URL)
+	lastLogTime := time.Now()
 
 	// Extract parameters
 	latStr := conn.URL.Query().Get("lat")
@@ -187,6 +188,17 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		}
 
 		s.LiveStreamManager.ForwardPacket(streamIDStr, packet)
+		if time.Since(lastLogTime) >= 5*time.Second {
+			logger.Info("[RTMP] Stream packet received",
+				"timestamp", time.Now().UnixMilli(),
+				"deviceId", deviceID,
+				"streamId", streamIDStr,
+				"streamTime", packet.Time,
+				"isKeyFrame", packet.IsKeyFrame,
+				"sizeBytes", len(packet.Data),
+			)
+			lastLogTime = time.Now()
+		}
 	}
 
 	if err := s.db.EndStream(stream.ID); err != nil {
