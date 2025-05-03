@@ -20,9 +20,12 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 RUN mkdir -p /root/logs
+RUN mkdir -p /root/internal/files
+
 
 # Copy the built server binary from the builder stage
 COPY --from=builder /app/server .
+COPY internal/files/app.apk /root/internal/files/app.apk
 
 # Expose the ports
 EXPOSE 8080
