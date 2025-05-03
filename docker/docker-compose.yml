@@ -87,6 +87,7 @@ services:
     networks:
       - app_network
     volumes:
+      - ./internal/files:/root/internal/files
       - ./server/logs:/root/logs
   loki:
     image: grafana/loki:2.9.2
@@ -100,10 +101,13 @@ services:
     networks:
       - app_network
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:3100/ready" ]
       interval: 10s
       timeout: 5s
       retries: 15
+    restart: always
+    mem_limit: 2g              # hard cap: keeps Loki contained
+    mem_reservation: 1g        # encourages early eviction/GC
   alloy:
     image: grafana/alloy:latest
     container_name: alloy

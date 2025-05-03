@@ -74,7 +74,7 @@ func Load() (*Config, error) {
 			Database: getEnv("MONGODB_DATABASE", "dash_ads_server"),
 		},
 		MQTT: MQTTConfig{
-			URI:      getEnv("MQTT_URI", "mqtt://localhost:1883"),
+			URI:      getEnv("MQTT_URI", "mqtt://195.251.127.196:1883"),
 			Username: getEnv("MQTT_USERNAME", ""),
 			Password: getEnv("MQTT_PASSWORD", ""),
 		},

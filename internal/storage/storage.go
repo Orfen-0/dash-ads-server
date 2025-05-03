@@ -72,5 +72,3 @@ func (s *MinIOStorage) DownloadStream(ctx context.Context, objectName string) (i
 	logger.Info("Successfully opened object for streaming", "objectName", objectName)
 	return obj, nil
 }
-
-// Add more methods as needed, e.g., DownloadStream, DeleteObject, etc.

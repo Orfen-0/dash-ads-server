@@ -1,20 +1,21 @@
-  logging {
-    level  = "info"
-    format = "logfmt"
-  }
+logging {
+  level  = "info"
+  format = "logfmt"
+}
 
-    loki.source.file "go_app_logs" {
-    targets = [
+loki.source.file "go_app_logs" {
+  targets = [
     {
     __path__ = "/var/log/myapp/server.log",
-    job      = "go-server"
+    job      = "go-server",
     },
-    ]
-    forward_to = [loki.write.default.receiver]
-  }
+  ]
+  forward_to = [loki.write.default.receiver]
+}
 
-    loki.write "default" {
-    endpoint {
+loki.write "default" {
+  endpoint {
     url = "http://loki:3100/loki/api/v1/push"
-    }
   }
+}
+
