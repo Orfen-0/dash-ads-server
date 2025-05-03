@@ -92,6 +92,7 @@ func (mc *MQTTClient) handleLogMessage(client MQTT.Client, msg MQTT.Message) {
 		Message   string `json:"message"`
 		Timestamp int64  `json:"timestamp"`
 		Tag       string `json:"tag"`
+		EventID   string `json:"eventId"`
 	}
 
 	if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
@@ -105,6 +106,7 @@ func (mc *MQTTClient) handleLogMessage(client MQTT.Client, msg MQTT.Message) {
 		"tag", payload.Tag,
 		"level", strings.ToUpper(payload.Level),
 		"device_ts", time.UnixMilli(payload.Timestamp).Format("2006-01-02 15:04:05.000"),
+		"event_id", payload.EventID,
 	)
 
 }
