@@ -137,7 +137,7 @@ services:
     build: ../../stream-viewer
     container_name: react_frontend
     environment:
-      REACT_APP_API_URL: "http://195.251.127.196:8080"
+      REACT_APP_API_URL: "http://localhost:8080"
     ports:
       - "3000:3000"
     networks:
