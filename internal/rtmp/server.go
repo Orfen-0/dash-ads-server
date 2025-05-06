@@ -81,6 +81,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		return err
 	}
 	parsedTime := time.Unix(sec/1000, (sec%1000)*int64(time.Millisecond))
+	deviceStreamStartTs, err := strconv.ParseInt(timestamp, 10, 64)
 	logger.Info("Incoming stream request", "deviceId", deviceID, "eventId", eventIDStr)
 	// Create stream record
 	streamID := primitive.NewObjectID()
@@ -189,16 +190,24 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 
 		s.LiveStreamManager.ForwardPacket(streamIDStr, packet)
 		if time.Since(lastLogTime) >= 5*time.Second {
+			tNow := time.Now().UnixMilli()
+			streamTimeMs := int64(packet.Time)
+			expectedServerTs := deviceStreamStartTs + streamTimeMs
+			latencyMs := tNow - expectedServerTs
+
 			logger.Info("[RTMP] Stream packet received",
-				"timestamp", time.Now().UnixMilli(),
+				"timestamp", tNow,
 				"deviceId", deviceID,
 				"streamId", streamIDStr,
-				"streamTime", packet.Time,
+				"streamTime", streamTimeMs,
+				"expected_ts", expectedServerTs,
+				"latency_ms", latencyMs,
 				"isKeyFrame", packet.IsKeyFrame,
 				"sizeBytes", len(packet.Data),
 			)
 			lastLogTime = time.Now()
 		}
+
 	}
 
 	if err := s.db.EndStream(stream.ID); err != nil {

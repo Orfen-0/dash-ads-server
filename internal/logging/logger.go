@@ -47,7 +47,7 @@ func (l *Logger) Warn(msg string, keyvals ...any) {
 func (l *Logger) output(level string, msg string, keyvals ...any) {
 	timestamp := time.Now().UnixMilli()
 
-	logLine := fmt.Sprintf("ts=%s level=%s component=%s msg=%q", timestamp, level, l.component, msg)
+	logLine := fmt.Sprintf("ts=%d level=%s component=%s msg=%q", timestamp, level, l.component, msg)
 
 	for i := 0; i < len(keyvals); i += 2 {
 		if i+1 < len(keyvals) {
