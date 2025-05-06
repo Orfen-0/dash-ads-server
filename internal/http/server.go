@@ -588,6 +588,15 @@ func (s *Server) ServeAPK(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Disposition", "attachment; filename=app-release.apk")
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", getFileSize(apkFilePath)))
 
 	http.ServeFile(w, r, apkFilePath)
+}
+
+func getFileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }

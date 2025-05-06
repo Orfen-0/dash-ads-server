@@ -45,7 +45,7 @@ func (l *Logger) Warn(msg string, keyvals ...any) {
 }
 
 func (l *Logger) output(level string, msg string, keyvals ...any) {
-	timestamp := time.Now().Format(time.RFC3339Nano)
+	timestamp := time.Now().UnixMilli()
 
 	logLine := fmt.Sprintf("ts=%s level=%s component=%s msg=%q", timestamp, level, l.component, msg)
 

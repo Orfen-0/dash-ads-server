@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Orfen-0/dash-ads-server/internal/config"
-	"github.com/Orfen-0/dash-ads-server/internal/logging"
-	"strings"
-	"time"
-
 	"github.com/Orfen-0/dash-ads-server/internal/database"
+	"github.com/Orfen-0/dash-ads-server/internal/logging"
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"strings"
 )
 
 // MQTTClient holds our Paho MQTT client plus references we need to handle messages.
@@ -105,7 +103,7 @@ func (mc *MQTTClient) handleLogMessage(client MQTT.Client, msg MQTT.Message) {
 		"device_id", deviceID,
 		"tag", payload.Tag,
 		"level", strings.ToUpper(payload.Level),
-		"device_ts", time.UnixMilli(payload.Timestamp).Format("2006-01-02 15:04:05.000"),
+		"device_ts", payload.Timestamp,
 		"event_id", payload.EventID,
 	)
 
