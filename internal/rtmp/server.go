@@ -192,7 +192,7 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		s.LiveStreamManager.ForwardPacket(streamIDStr, packet)
 		if time.Since(lastLogTime) >= 5*time.Second {
 			tNow := time.Now().UnixMilli()
-			streamTimeMs := int64(packet.Time)
+			streamTimeMs := packet.Time.Milliseconds()
 			expectedServerTs := deviceStreamStartTs + streamTimeMs
 			latencyMs := tNow - expectedServerTs
 
