@@ -167,8 +167,9 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 		logger.Info("[MinIO] Stream uploaded successfully", "deviceId", deviceID, "streamId", streamIDStr)
 
 	}()
-
+	packetCount := 0
 	for {
+		packetCount++
 		packet, err := conn.ReadPacket()
 		if err != nil {
 			if err == io.EOF {
@@ -204,8 +205,10 @@ func (s *Server) handlePublish(conn *rtmp.Conn) error {
 				"latency_ms", latencyMs,
 				"isKeyFrame", packet.IsKeyFrame,
 				"sizeBytes", len(packet.Data),
+				"packetsSinceLast", packetCount,
 			)
 			lastLogTime = time.Now()
+			packetCount = 0
 		}
 
 	}
